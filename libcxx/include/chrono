@@ -1119,7 +1119,10 @@ namespace std {
 
 #    if _LIBCPP_HAS_LOCALIZATION
 #      include <__chrono/formatter.h>
+#      include <__chrono/from_stream.h>
 #      include <__chrono/ostream.h>
+#      include <__chrono/parse.h>
+#      include <__chrono/parser_data.h>
 #      include <__chrono/parser_std_format_spec.h>
 #      include <__chrono/statically_widen.h>
 #    endif
