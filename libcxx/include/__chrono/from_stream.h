@@ -52,10 +52,6 @@
 _LIBCPP_BEGIN_NAMESPACE_STD
 
 namespace chrono {
-
-// Parsing records fields, normalizes alternative representations, and then
-// converts the fields to the requested type. Errors are reported with failbit.
-
 // __fractional_width_ is the number of fractional digits read by %S.
 // __is_duration_ distinguishes a duration from a time point when fields look the same, such as "1:30".
 struct __parse_options {
@@ -140,8 +136,7 @@ _LIBCPP_HIDE_FROM_ABI int __read_digits(basic_istream<_CharT, _Traits>& __is, in
 
 // The sign does not count towards '__max_digits'.
 template <class _CharT, class _Traits>
-_LIBCPP_HIDE_FROM_ABI void
-__read_signed_digits(basic_istream<_CharT, _Traits>& __is, int __max_digits, int& __value) {
+_LIBCPP_HIDE_FROM_ABI void __read_signed_digits(basic_istream<_CharT, _Traits>& __is, int __max_digits, int& __value) {
   bool __negative = false;
   if (_CharT __c{}; chrono::__peek(__is, __c) && (_Traits::eq(__c, _CharT('-')) || _Traits::eq(__c, _CharT('+')))) {
     __negative = _Traits::eq(__c, _CharT('-'));
@@ -321,6 +316,7 @@ _LIBCPP_HIDE_FROM_ABI constexpr bool __width_allowed(char __spec) {
   case 'C':
   case 'd':
   case 'e':
+  case 'F':
   case 'g':
   case 'G':
   case 'H':
@@ -666,8 +662,11 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
           __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%m/%d/%y"), __f, __abbrev, __offset, __options);
       break;
     case 'F':
-      chrono::__parse_from_stream(
-          __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%Y-%m-%d"), __f, __abbrev, __offset, __options);
+      // A width on %F applies only to %Y.
+      __read_signed_field(4, __f.__year_, __fields_set::__year);
+      if (!__is.fail())
+        chrono::__parse_from_stream(
+            __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "-%m-%d"), __f, __abbrev, __offset, __options);
       break;
     case 'T':
       chrono::__parse_from_stream(

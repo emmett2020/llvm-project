@@ -60,6 +60,9 @@ static void test() {
   assert((parse<CharT, Seconds>(ST("2026-07-20 13:45:30"), ST("%F %T")) == date_time));
   assert((parse<CharT, Seconds>(ST("2026-07-20 13:45"), ST("%F %R")) == date + 13h + 45min));
 
+  // A width on %F applies only to %Y; %m and %d retain their default widths.
+  assert((parse<CharT, Seconds>(ST("002026-07-20"), ST("%6F")) == date));
+
   // Missing time-of-day defaults to midnight.
   assert((parse<CharT, Seconds>(ST("2026-07-20"), ST("%F")) == date));
 
@@ -78,6 +81,7 @@ static void test() {
   parse<CharT, Seconds>(
       ST("2026-07-xx"), ST("%Y-%m-%d"), /*expected_fail=*/true);   // non-digit where a digit is required
   parse<CharT, Seconds>(ST(""), ST("%Y"), /*expected_fail=*/true); // empty input
+  parse<CharT, Seconds>(ST("2026/07/20"), ST("%6D"), /*expected_fail=*/true); // %D does not allow a width
 
   // Calendar year boundaries are accepted; values outside the target are
   // rejected without modifying the result.
