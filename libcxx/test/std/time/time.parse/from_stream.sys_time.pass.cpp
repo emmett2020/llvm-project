@@ -53,7 +53,7 @@ protected:
       return begin;
     }
 
-    for (char expected : {'x', 'y'}) {
+    for (char expected : {'x', 'y', 'z'}) {
       if (begin == end) {
         err |= std::ios_base::eofbit | std::ios_base::failbit;
         return begin;
@@ -93,7 +93,7 @@ static void test() {
   const sys_seconds date_time = date + 13h + 45min + 30s;
 
   auto parse_alternative_day = [&](const std::basic_string<CharT>& fmt, bool expected_fail) {
-    std::basic_istringstream<CharT> stream{ST("2026-07-xy!")};
+    std::basic_istringstream<CharT> stream{ST("2026-07-xyz!")};
     stream.imbue(std::locale(std::locale::classic(), new alternative_day_time_get<CharT>));
     sys_time<Seconds> result{};
     from_stream(stream, fmt.c_str(), result);
@@ -109,8 +109,8 @@ static void test() {
   // %e is equivalent to %d when parsing; leading zeroes are optional.
   assert((parse<CharT, Seconds>(ST("2026-07-7"), ST("%Y-%m-%e")) == sys_days{2026y / July / 7}));
 
-  // %Od and %Oe use the locale's alternative representation of the day.
-  assert((parse_alternative_day(ST("%Y-%m-%2Od!"), false) == sys_days{2026y / July / 7}));
+  // Alternative day representations need not fit the ordinary two-digit width.
+  assert((parse_alternative_day(ST("%Y-%m-%Od!"), false) == sys_days{2026y / July / 7}));
   assert((parse_alternative_day(ST("%Y-%m-%Oe!"), false) == sys_days{2026y / July / 7}));
 
   // Compound specifiers expand to the numeric ones.
@@ -138,7 +138,7 @@ static void test() {
   parse<CharT, Seconds>(
       ST("2026-07-xx"), ST("%Y-%m-%d"), /*expected_fail=*/true);   // non-digit where a digit is required
   parse<CharT, Seconds>(ST("2026-07- 7"), ST("%Y-%m-%e"), /*expected_fail=*/true); // %e does not skip whitespace
-  parse_alternative_day(ST("%Y-%m-%1Oe!"), true); // The width also limits an alternative representation.
+  parse_alternative_day(ST("%Y-%m-%Oe?"), true); // A following literal must still match.
   parse<CharT, Seconds>(ST(""), ST("%Y"), /*expected_fail=*/true); // empty input
   parse<CharT, Seconds>(ST("2026/07/20"), ST("%6D"), /*expected_fail=*/true); // %D does not allow a width
 

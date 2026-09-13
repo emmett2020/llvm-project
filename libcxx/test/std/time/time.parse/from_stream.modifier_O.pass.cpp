@@ -50,15 +50,18 @@ protected:
 
     assert(modifier == 'O');
     assert(spec == spec_);
-    if (first == last) {
-      err |= std::ios_base::failbit | std::ios_base::eofbit;
-      return first;
+    // The alternative representation is longer than an ordinary numeric field.
+    for (int i = 0; i < 3; ++i) {
+      if (first == last) {
+        err |= std::ios_base::failbit | std::ios_base::eofbit;
+        return first;
+      }
+      if (*first != CharT('@')) {
+        err |= std::ios_base::failbit;
+        return first;
+      }
+      ++first;
     }
-    if (*first != CharT('@')) {
-      err |= std::ios_base::failbit;
-      return first;
-    }
-    ++first;
 
     switch (spec) {
     case 'd':
@@ -106,20 +109,20 @@ void test() {
     sys_seconds expected;
   };
   const TestCase cases[] = {
-      {ST("@-07-20"), ST("%Oy-%m-%d"), 'y', 126, date},
-      {ST("19 @-07-20"), ST("%C %Oy-%m-%d"), 'y', 126, sys_days{1926y / July / 20}},
-      {ST("@-07-20"), ST("%Oy-%m-%d"), 'y', 68, sys_days{2068y / July / 20}},
-      {ST("@-07-20"), ST("%Oy-%m-%d"), 'y', 69, sys_days{1969y / July / 20}},
-      {ST("2026-@-20"), ST("%Y-%Om-%d"), 'm', 6, date},
-      {ST("2026-07-@"), ST("%Y-%m-%Od"), 'd', 20, date},
-      {ST("2026-07-@"), ST("%Y-%m-%Oe"), 'e', 20, date},
-      {ST("2026-07-20 @"), ST("%F %Ow"), 'w', 1, date},
-      {ST("2026-07-20 @"), ST("%F %OH"), 'H', 13, date + 13h},
-      {ST("2026-07-20 @ PM"), ST("%F %OI %p"), 'I', 1, date + 13h},
-      {ST("2026-07-20 PM @"), ST("%F %p %OI"), 'I', 1, date + 13h},
-      {ST("2026-07-20 @ AM"), ST("%F %OI %p"), 'I', 0, date},
-      {ST("2026-07-20 @ PM"), ST("%F %OI %p"), 'I', 0, date + 12h},
-      {ST("2026-07-20 @"), ST("%F %OM"), 'M', 45, date + 45min},
+      {ST("@@@-07-20"), ST("%Oy-%m-%d"), 'y', 126, date},
+      {ST("19 @@@-07-20"), ST("%C %Oy-%m-%d"), 'y', 126, sys_days{1926y / July / 20}},
+      {ST("@@@-07-20"), ST("%Oy-%m-%d"), 'y', 68, sys_days{2068y / July / 20}},
+      {ST("@@@-07-20"), ST("%Oy-%m-%d"), 'y', 69, sys_days{1969y / July / 20}},
+      {ST("2026-@@@-20"), ST("%Y-%Om-%d"), 'm', 6, date},
+      {ST("2026-07-@@@"), ST("%Y-%m-%Od"), 'd', 20, date},
+      {ST("2026-07-@@@"), ST("%Y-%m-%Oe"), 'e', 20, date},
+      {ST("2026-07-20 @@@"), ST("%F %Ow"), 'w', 1, date},
+      {ST("2026-07-20 @@@"), ST("%F %OH"), 'H', 13, date + 13h},
+      {ST("2026-07-20 @@@ PM"), ST("%F %OI %p"), 'I', 1, date + 13h},
+      {ST("2026-07-20 PM @@@"), ST("%F %p %OI"), 'I', 1, date + 13h},
+      {ST("2026-07-20 @@@ AM"), ST("%F %OI %p"), 'I', 0, date},
+      {ST("2026-07-20 @@@ PM"), ST("%F %OI %p"), 'I', 0, date + 12h},
+      {ST("2026-07-20 @@@"), ST("%F %OM"), 'M', 45, date + 45min},
   };
   for (const auto& c : cases) {
     for (bool fail : {false, true}) {
@@ -140,6 +143,18 @@ void test() {
     }
   }
 
+  // A truncated alternative representation still fails without changing the result.
+  {
+    std::basic_istringstream<CharT> stream(ST("2026-07-@@"));
+    stream.imbue(std::locale(std::locale::classic(), new alternative_time_get<CharT>('e', 20, false)));
+    const sys_seconds initial{42s};
+    sys_seconds result = initial;
+    from_stream(stream, ST("%Y-%m-%Oe").c_str(), result);
+    assert(stream.fail());
+    assert(stream.eof());
+    assert(result == initial);
+  }
+
   // Exercise the built-in facet, including %OI at midnight and noon.
   for (const auto& input : {ST("26-07-20 13:45 1"), ST("26-07-20 13:45 1!")}) {
     std::basic_istringstream<CharT> stream(input);
@@ -149,6 +164,17 @@ void test() {
     assert(!stream.fail());
     assert(result == date + 13h + 45min);
   }
+
+  // In the classic locale, %y, %Ey and %Oy all accept ordinary year digits.
+  for (const auto& format : {ST("%y-%m-%d"), ST("%Ey-%m-%d"), ST("%Oy-%m-%d")}) {
+    std::basic_istringstream<CharT> stream(ST("26-07-20"));
+    stream.imbue(std::locale::classic());
+    sys_seconds result{};
+    from_stream(stream, format.c_str(), result);
+    assert(!stream.fail());
+    assert(result == date);
+  }
+
   for (bool pm : {false, true}) {
     std::basic_istringstream<CharT> stream(ST("2026-07-20 12 ") + (pm ? ST("PM") : ST("AM")));
     stream.imbue(std::locale::classic());
@@ -160,7 +186,7 @@ void test() {
 
   // A duration's leading sign still applies when its first field uses a facet.
   {
-    std::basic_istringstream<CharT> stream(ST("-@:45"));
+    std::basic_istringstream<CharT> stream(ST("-@@@:45"));
     stream.imbue(std::locale(std::locale::classic(), new alternative_time_get<CharT>('H', 13, false)));
     minutes result{};
     from_stream(stream, ST("%OH:%M").c_str(), result);
