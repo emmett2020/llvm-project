@@ -55,8 +55,8 @@ namespace chrono {
 // __fractional_width_ is the number of fractional digits read by %S.
 // __is_duration_ distinguishes a duration from a time point when fields look the same, such as "1:30".
 struct __parse_options {
-  int __fractional_width_ = 0;
-  bool __is_duration_     = false;
+  unsigned __fractional_width_ = 0;
+  bool __is_duration_          = false;
 };
 
 template <class _Tp>
@@ -64,15 +64,15 @@ inline constexpr __parse_options __parse_options_v{};
 
 template <class _Rep, class _Period>
 inline constexpr __parse_options __parse_options_v<duration<_Rep, _Period> >{
-    static_cast<int>(hh_mm_ss<duration<_Rep, _Period> >::fractional_width), /*__is_duration_=*/true};
+    hh_mm_ss<duration<_Rep, _Period> >::fractional_width, /*__is_duration_=*/true};
 
 template <class _Clock, class _Duration>
 inline constexpr __parse_options __parse_options_v<time_point<_Clock, _Duration> >{
     __parse_options_v<_Duration>.__fractional_width_, /*__is_duration_=*/false};
 
-_LIBCPP_HIDE_FROM_ABI constexpr int64_t __pow10(int __exp) {
+_LIBCPP_HIDE_FROM_ABI constexpr int64_t __pow10(unsigned __exp) {
   int64_t __result = 1;
-  for (int __i = 0; __i < __exp; ++__i)
+  for (unsigned __i = 0; __i < __exp; ++__i)
     __result *= 10;
   return __result;
 }
@@ -91,19 +91,19 @@ _LIBCPP_HIDE_FROM_ABI bool __peek(basic_istream<_CharT, _Traits>& __is, _CharT& 
 }
 
 struct __read_digits_result {
-  uint64_t __value  = 0;
-  int __digits_read = 0;
-  bool __overflow   = false;
+  uint64_t __value       = 0;
+  unsigned __digits_read = 0;
+  bool __overflow        = false;
 };
 
 // Extracts digits and reports their value, count, and overflow status.
 // After overflow, digits are still consumed up to '__max_digits'.
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI __read_digits_result
-__read_digits(basic_istream<_CharT, _Traits>& __is, int __max_digits, uint64_t __max_value) {
-  uint64_t __result = 0;
-  int __digits_read = 0;
-  bool __overflow   = false;
+__read_digits(basic_istream<_CharT, _Traits>& __is, unsigned __max_digits, uint64_t __max_value) {
+  uint64_t __result      = 0;
+  unsigned __digits_read = 0;
+  bool __overflow        = false;
 
   for (_CharT __c{}; __digits_read < __max_digits && chrono::__peek(__is, __c); ++__digits_read) {
     if (__c < _CharT('0') || __c > _CharT('9'))
@@ -125,7 +125,8 @@ __read_digits(basic_istream<_CharT, _Traits>& __is, int __max_digits, uint64_t _
 // Reads an integer without a sign into int. Returns the number of digits read.
 // Failure leaves '__value' unchanged.
 template <class _CharT, class _Traits>
-_LIBCPP_HIDE_FROM_ABI int __read_unsigned(basic_istream<_CharT, _Traits>& __is, int __max_digits, int& __value) {
+_LIBCPP_HIDE_FROM_ABI unsigned
+__read_unsigned(basic_istream<_CharT, _Traits>& __is, unsigned __max_digits, int& __value) {
   auto __result = chrono::__read_digits(__is, __max_digits, (numeric_limits<int>::max)());
 
   if (__result.__digits_read == 0 || __result.__overflow)
@@ -139,7 +140,7 @@ _LIBCPP_HIDE_FROM_ABI int __read_unsigned(basic_istream<_CharT, _Traits>& __is, 
 // Reads an integer with an optional '+' or '-'. Failure leaves '__value' unchanged.
 // The sign does not count towards '__max_digits'.
 template <class _CharT, class _Traits>
-_LIBCPP_HIDE_FROM_ABI void __read_signed(basic_istream<_CharT, _Traits>& __is, int __max_digits, int& __value) {
+_LIBCPP_HIDE_FROM_ABI void __read_signed(basic_istream<_CharT, _Traits>& __is, unsigned __max_digits, int& __value) {
   bool __negative = false;
   if (_CharT __c{}; chrono::__peek(__is, __c) && (_Traits::eq(__c, _CharT('-')) || _Traits::eq(__c, _CharT('+')))) {
     __negative = _Traits::eq(__c, _CharT('-'));
@@ -211,17 +212,17 @@ _LIBCPP_HIDE_FROM_ABI void __read_am_pm(basic_istream<_CharT, _Traits>& __is, bo
 
 // Parses %S and its optional fractional part. '__width' includes the decimal point.
 template <class _CharT, class _Traits>
-_LIBCPP_HIDE_FROM_ABI void
-__read_seconds(basic_istream<_CharT, _Traits>& __is, int __width, int __fractional_width, __fields_storage& __f) {
-  int __seconds     = 0;
-  int __digits_read = chrono::__read_unsigned(__is, __width, __seconds);
+_LIBCPP_HIDE_FROM_ABI void __read_seconds(
+    basic_istream<_CharT, _Traits>& __is, unsigned __width, unsigned __fractional_width, __fields_storage& __f) {
+  int __seconds          = 0;
+  unsigned __digits_read = chrono::__read_unsigned(__is, __width, __seconds);
   if (__is.fail())
     return;
 
   __f.__seconds_ = __seconds;
 
   // A fractional part needs a decimal point and at least one digit.
-  int __remaining = __width - __digits_read;
+  unsigned __remaining = __width - __digits_read;
 
   // Do not consume a fractional part when the target has no subsecond
   // precision or the field width cannot hold a decimal point and one digit.
@@ -257,8 +258,8 @@ _LIBCPP_HIDE_FROM_ABI void __read_utc_offset(basic_istream<_CharT, _Traits>& __i
   int __sign = _Traits::eq(__c, _CharT('-')) ? -1 : 1;
   __is.get();
 
-  int __hours       = 0;
-  int __digits_read = chrono::__read_unsigned(__is, 2, __hours);
+  int __hours            = 0;
+  unsigned __digits_read = chrono::__read_unsigned(__is, 2, __hours);
 
   // %z requires exactly two hour digits, while %Ez and %Oz allow one or two.
   if (__is.fail() || (!__is_modified && __digits_read != 2)) {
@@ -413,7 +414,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     }
   };
 
-  int __width      = 0;
+  unsigned __width = 0;
   bool __has_width = false;
 
   // Parses an O-modified field through time_get and converts its tm member.
@@ -491,9 +492,9 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     __has_width = false;
     __width     = 0;
     while (_CharT('0') <= *__fmt && *__fmt <= _CharT('9')) {
-      __has_width       = true;
-      const int __digit = static_cast<int>(*__fmt - _CharT('0'));
-      if (__width > ((numeric_limits<int>::max)() - __digit) / 10) {
+      __has_width            = true;
+      const unsigned __digit = static_cast<unsigned>(*__fmt - _CharT('0'));
+      if (__width > ((numeric_limits<unsigned>::max)() - __digit) / 10) {
         __is.setstate(ios_base::failbit);
         return;
       }
@@ -538,6 +539,8 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
     }
     case 'C':
+      // TODO: Parse the locale's alternative century representation for %EC.
+      // time_get does not support %C yet, so retain the numeric fallback.
       chrono::__read_signed(__is, __has_width ? __width : 2, __f.__century_);
       if (!__is.fail())
         __f.__set(__fields_set::__century);
@@ -651,8 +654,8 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       // TODO: Parse the locale's alternative seconds representation for %OS.
       // Without an explicit width the field is two digits, plus the decimal
       // point and the fractional digits the target can represent.
-      int __fractional_width = __options.__fractional_width_;
-      int __default_width    = __fractional_width == 0 ? 2 : 3 + __fractional_width;
+      unsigned __fractional_width = __options.__fractional_width_;
+      unsigned __default_width    = __fractional_width == 0 ? 2 : 3 + __fractional_width;
       __consume_duration_minus();
       chrono::__read_seconds(__is, __has_width ? __width : __default_width, __fractional_width, __f);
       if (!__is.fail())
@@ -721,9 +724,11 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__year_of_century_);
       else if (__modifier == 'E') {
-        // TODO: Parse %Ey relative to the locale's alternative era (%EC).
-        // Preserve the numeric fallback until alternative eras are supported.
-        chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__year_of_century_);
+        tm __tm{};
+        if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier)) {
+          const int64_t __year   = static_cast<int64_t>(__tm.tm_year) + 1900;
+          __f.__year_of_century_ = static_cast<int>((__year < 0 ? -__year : __year) % 100);
+        }
       } else
         chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__year_of_century_);
       if (!__is.fail() && (__f.__year_of_century_ < 0 || __f.__year_of_century_ > 99))
@@ -732,7 +737,17 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
         __f.__set(__fields_set::__year_of_century);
       break;
     case 'Y':
-      chrono::__read_signed(__is, __has_width ? __width : 4, __f.__year_);
+      if (__modifier == 'E') {
+        tm __tm{};
+        if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier)) {
+          const int64_t __year = static_cast<int64_t>(__tm.tm_year) + 1900;
+          if (__year > (numeric_limits<int>::max)())
+            __is.setstate(ios_base::failbit);
+          else
+            __f.__year_ = static_cast<int>(__year);
+        }
+      } else
+        chrono::__read_signed(__is, __has_width ? __width : 4, __f.__year_);
       if (!__is.fail())
         __f.__set(__fields_set::__year);
       break;

@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cassert>
 #include <ctime>
+#include <limits>
 #include <locale>
 #include <sstream>
 
@@ -119,6 +120,39 @@ static void test() {
 
   // A width on %F applies only to %Y; %m and %d retain their default widths.
   assert((parse<CharT, Seconds>(ST("002026-07-20"), ST("%6F")) == date));
+
+  // Widths can use the full unsigned range for both signed and unsigned fields.
+  {
+    std::basic_ostringstream<CharT> format;
+    format << CharT('%') << std::numeric_limits<unsigned>::max();
+    assert((parse<CharT, Seconds>(ST("2026-07-20"), format.str() + ST("F")) == date));
+
+    std::basic_istringstream<CharT> stream{ST("1.25!")};
+    milliseconds result{};
+    from_stream(stream, (format.str() + ST("S!")).c_str(), result);
+    assert(!stream.fail());
+    assert(result == 1250ms);
+
+    // An overflowing width fails before consuming input or changing the result.
+    stream.str(ST("1.25!"));
+    stream.clear();
+    result = 42ms;
+    from_stream(stream, (format.str() + ST("0S")).c_str(), result);
+    assert(stream.fail());
+    assert(result == 42ms);
+    stream.clear();
+    assert(stream.peek() == CharT('1'));
+  }
+
+  // No unsigned underflow when the width leaves no room for fractional digits.
+  for (const auto& format : {ST("%1S"), ST("%2S")}) {
+    std::basic_istringstream<CharT> stream{ST("1.25")};
+    milliseconds result{};
+    from_stream(stream, format.c_str(), result);
+    assert(!stream.fail());
+    assert(result == 1s);
+    assert(stream.peek() == CharT('.'));
+  }
 
   // ISO week dates combine the separately parsed year, week, and weekday fields.
   assert((parse<CharT, Seconds>(ST("2026-W30-1"), ST("%G-W%V-%u")) == date));
