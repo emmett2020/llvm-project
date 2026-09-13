@@ -178,7 +178,11 @@ static void test() {
     assert(!stream.fail());
     assert(result == c.expected);
   }
-  for (const auto& c : {DurationCase{ST("1:-30"), ST("%H:%M"), 42ms}, DurationCase{ST("-1."), ST("%S"), 42ms}}) {
+  for (const auto& c :
+       {DurationCase{ST("1:-30"), ST("%H:%M"), 42ms},
+        DurationCase{ST("-1."), ST("%S"), 42ms},
+        DurationCase{ST("-07 01"), ST("%d %H"), 42ms},
+        DurationCase{ST("-07 01"), ST("%e %H"), 42ms}}) {
     std::basic_istringstream<CharT> stream(c.input);
     milliseconds result = c.expected;
     from_stream(stream, c.format.c_str(), result);
@@ -213,21 +217,21 @@ static void test() {
   {
     std::basic_istringstream<CharT> stream{ST("+32767")};
     year value{0};
-    from_stream(stream, ST("%5Y").c_str(), value);
+    from_stream(stream, ST("%6Y").c_str(), value);
     assert(!stream.fail());
     assert(value == year::max());
   }
   {
     std::basic_istringstream<CharT> stream{ST("-32767")};
     year value{0};
-    from_stream(stream, ST("%5Y").c_str(), value);
+    from_stream(stream, ST("%6Y").c_str(), value);
     assert(!stream.fail());
     assert(value == year::min());
   }
   {
     std::basic_istringstream<CharT> stream{ST("+32768X")};
     year value{2026};
-    from_stream(stream, ST("%5Y").c_str(), value);
+    from_stream(stream, ST("%6Y").c_str(), value);
     assert(stream.fail());
     assert(value == year{2026});
 
@@ -237,7 +241,7 @@ static void test() {
   {
     std::basic_istringstream<CharT> stream{ST("-32769")};
     year value{2026};
-    from_stream(stream, ST("%5Y").c_str(), value);
+    from_stream(stream, ST("%6Y").c_str(), value);
     assert(stream.fail());
     assert(value == year{2026});
   }
@@ -264,7 +268,7 @@ static void test() {
     // when it overflows.
     std::basic_istringstream<CharT> stream{ST("+2147483648X")};
     year value{2026};
-    from_stream(stream, ST("%10Y").c_str(), value);
+    from_stream(stream, ST("%11Y").c_str(), value);
     assert(stream.fail());
     assert(value == year{2026});
 
@@ -275,7 +279,7 @@ static void test() {
     // Combining an individually valid int century with %y is checked too.
     std::basic_istringstream<CharT> stream{ST("+214748364799")};
     year value{2026};
-    from_stream(stream, ST("%10C%2y").c_str(), value);
+    from_stream(stream, ST("%11C%2y").c_str(), value);
     assert(stream.fail());
     assert(value == year{2026});
   }

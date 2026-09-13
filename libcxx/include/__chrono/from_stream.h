@@ -37,6 +37,8 @@
 #  include <__iterator/istreambuf_iterator.h>
 #  include <__locale>
 #  include <__locale_dir/time.h>
+#  include <__type_traits/common_type.h>
+#  include <__type_traits/make_unsigned.h>
 #  include <cctype>
 #  include <cstdint>
 #  include <ctime>
@@ -138,13 +140,15 @@ __read_unsigned(basic_istream<_CharT, _Traits>& __is, unsigned __max_digits, int
 }
 
 // Reads an integer with an optional '+' or '-'. Failure leaves '__value' unchanged.
-// The sign does not count towards '__max_digits'.
+// The width includes an optional sign.
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI void __read_signed(basic_istream<_CharT, _Traits>& __is, unsigned __max_digits, int& __value) {
   bool __negative = false;
-  if (_CharT __c{}; chrono::__peek(__is, __c) && (_Traits::eq(__c, _CharT('-')) || _Traits::eq(__c, _CharT('+')))) {
+  if (_CharT __c{}; __max_digits != 0 && chrono::__peek(__is, __c) &&
+                    (_Traits::eq(__c, _CharT('-')) || _Traits::eq(__c, _CharT('+')))) {
     __negative = _Traits::eq(__c, _CharT('-'));
     __is.get();
+    --__max_digits;
   }
 
   const uint64_t __positive_limit = static_cast<uint64_t>((numeric_limits<int>::max)());
@@ -188,8 +192,12 @@ __read_with_time_get(basic_istream<_CharT, _Traits>& __is, tm& __tm, char __spec
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI void __read_month_name(basic_istream<_CharT, _Traits>& __is, int& __value) {
   tm __tm{};
-  if (chrono::__read_with_time_get(__is, __tm, 'b'))
-    __value = __tm.tm_mon + 1; // tm_mon is 0-based [0, 11].
+  if (chrono::__read_with_time_get(__is, __tm, 'b')) {
+    if (__tm.tm_mon == (numeric_limits<int>::max)())
+      __is.setstate(ios_base::failbit);
+    else
+      __value = __tm.tm_mon + 1; // tm_mon is 0-based [0, 11].
+  }
 }
 
 // Parses a locale-dependent weekday name using the chrono::weekday convention.
@@ -251,12 +259,13 @@ _LIBCPP_HIDE_FROM_ABI void __read_seconds(
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI void __read_utc_offset(basic_istream<_CharT, _Traits>& __is, bool __is_modified, int& __value) {
   _CharT __c{};
-  if (!chrono::__peek(__is, __c) || (!_Traits::eq(__c, _CharT('+')) && !_Traits::eq(__c, _CharT('-')))) {
+  if (!chrono::__peek(__is, __c)) {
     __is.setstate(ios_base::failbit);
     return;
   }
   int __sign = _Traits::eq(__c, _CharT('-')) ? -1 : 1;
-  __is.get();
+  if (_Traits::eq(__c, _CharT('+')) || _Traits::eq(__c, _CharT('-')))
+    __is.get();
 
   int __hours            = 0;
   unsigned __digits_read = chrono::__read_unsigned(__is, 2, __hours);
@@ -429,7 +438,10 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       __field = __tm.tm_mday;
       break;
     case 'm':
-      __field = __tm.tm_mon + 1;
+      if (__tm.tm_mon == (numeric_limits<int>::max)())
+        __is.setstate(ios_base::failbit);
+      else
+        __field = __tm.tm_mon + 1;
       break;
     case 'H':
       __field = __tm.tm_hour;
@@ -457,7 +469,12 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
   };
 
   auto __assign_date = [&](const tm& __tm) {
-    __f.__year_  = __tm.tm_year + 1900;
+    const int64_t __year = static_cast<int64_t>(__tm.tm_year) + 1900;
+    if (__year > (numeric_limits<int>::max)() || __tm.tm_mon == (numeric_limits<int>::max)()) {
+      __is.setstate(ios_base::failbit);
+      return;
+    }
+    __f.__year_  = static_cast<int>(__year);
     __f.__month_ = __tm.tm_mon + 1;
     __f.__day_   = __tm.tm_mday;
     __f.__set(__fields_set::__year | __fields_set::__month | __fields_set::__day);
@@ -516,6 +533,32 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       return;
     }
 
+    // Durations can represent only elapsed days and time-of-day fields.
+    // Offset/zone outputs and literals do not contribute to the duration.
+    if (__options.__is_duration_) {
+      switch (__spec) {
+      case 'H':
+      case 'I':
+      case 'j':
+      case 'M':
+      case 'p':
+      case 'r':
+      case 'R':
+      case 'T':
+      case 'S':
+      case 'X':
+      case 'z':
+      case 'Z':
+      case 'n':
+      case 't':
+      case '%':
+        break;
+      default:
+        __is.setstate(ios_base::failbit);
+        return;
+      }
+    }
+
     switch (__spec) {
     case 'a':
     case 'A':
@@ -523,6 +566,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__weekday);
       break;
+
     case 'b':
     case 'h':
     case 'B':
@@ -530,24 +574,31 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__month);
       break;
+
     case 'c': {
       tm __tm{};
       if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier)) {
         __assign_date(__tm);
-        __assign_time(__tm);
+        if (!__is.fail())
+          __assign_time(__tm);
       }
       break;
     }
+
     case 'C':
-      // TODO: Parse the locale's alternative century representation for %EC.
-      // time_get does not support %C yet, so retain the numeric fallback.
-      chrono::__read_signed(__is, __has_width ? __width : 2, __f.__century_);
+      if (__modifier == 'E') {
+        // TODO: Parse the locale's alternative century representation for %EC.
+        // time_get does not support %C yet, so retain the numeric fallback.
+        chrono::__read_signed(__is, 2, __f.__century_);
+      } else {
+        chrono::__read_signed(__is, __has_width ? __width : 2, __f.__century_);
+      }
       if (!__is.fail())
         __f.__set(__fields_set::__century);
       break;
+
     case 'd':
     case 'e':
-      __consume_duration_minus();
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__day_);
       else
@@ -555,6 +606,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__day);
       break;
+
     case 'D':
       chrono::__parse_from_stream(
           __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%m/%d/%y"), __f, __abbrev, __offset, __options);
@@ -615,7 +667,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
         __f.__set(__fields_set::__day_of_year);
       break;
     case 'm':
-      __consume_duration_minus();
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__month_);
       else
@@ -633,11 +684,13 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
         __f.__set(__fields_set::__minutes);
       break;
     case 'p':
+      __consume_duration_minus();
       chrono::__read_am_pm(__is, __f.__is_pm_);
       if (!__is.fail())
         __f.__set(__fields_set::__am_pm);
       break;
     case 'r': {
+      __consume_duration_minus();
       tm __tm{};
       if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier))
         __assign_time(__tm);
@@ -676,7 +729,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
     }
     case 'w': {
-      __consume_duration_minus();
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__weekday_);
       else
@@ -689,20 +741,17 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     }
     case 'U':
       // TODO: Parse the locale's alternative week number for %OU.
-      __consume_duration_minus();
       chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__week_sun_);
       if (!__is.fail())
         __f.__set(__fields_set::__week_sun);
       break;
     case 'V':
-      __consume_duration_minus();
       chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__iso_week_);
       if (!__is.fail())
         __f.__set(__fields_set::__iso_week);
       break;
     case 'W':
       // TODO: Parse the locale's alternative week number for %OW.
-      __consume_duration_minus();
       chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__week_mon_);
       if (!__is.fail())
         __f.__set(__fields_set::__week_mon);
@@ -714,13 +763,13 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
     }
     case 'X': {
+      __consume_duration_minus();
       tm __tm{};
       if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier))
         __assign_time(__tm);
       break;
     }
     case 'y':
-      __consume_duration_minus();
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__year_of_century_);
       else if (__modifier == 'E') {
@@ -790,10 +839,15 @@ _LIBCPP_HIDE_FROM_ABI inline bool __finalize(__fields_storage& __f) {
   if (__f.__has(__fields_set::__year_of_century)) {
     int __year{};
     if (__f.__has(__fields_set::__century)) {
-      if (__f.__century_ < (numeric_limits<int>::min)() / 100 ||
-          __f.__century_ > ((numeric_limits<int>::max)() - __f.__year_of_century_) / 100)
+      // %C uses floored division, while %y is the absolute last two digits.
+      int64_t __combined = static_cast<int64_t>(__f.__century_) * 100;
+      if (__f.__century_ < 0 && __f.__year_of_century_ != 0)
+        __combined += 100 - __f.__year_of_century_;
+      else
+        __combined += __f.__year_of_century_;
+      if (__combined < (numeric_limits<int>::min)() || __combined > (numeric_limits<int>::max)())
         return false;
-      __year = __f.__century_ * 100 + __f.__year_of_century_;
+      __year = static_cast<int>(__combined);
     } else
       __year = __f.__year_of_century_ <= 68 ? 2000 + __f.__year_of_century_ : 1900 + __f.__year_of_century_;
 
@@ -802,8 +856,11 @@ _LIBCPP_HIDE_FROM_ABI inline bool __finalize(__fields_storage& __f) {
 
     __f.__year_ = __year;
     __f.__set(__fields_set::__year);
-  } else if (__f.__has(__fields_set::__century | __fields_set::__year) && __f.__year_ / 100 != __f.__century_)
-    return false;
+  } else if (__f.__has(__fields_set::__century | __fields_set::__year)) {
+    const int __century = __f.__year_ / 100 - (__f.__year_ % 100 < 0);
+    if (__century != __f.__century_)
+      return false;
+  }
 
   // %I is the hour on the 12-hour clock, which %p disambiguates. Without %p the
   // hour is taken as it was written.
@@ -966,6 +1023,44 @@ _LIBCPP_HIDE_FROM_ABI inline bool __time_of_day_ok(const __fields_storage& __f, 
 
 // Builders validate parsed fields and convert them to the requested type.
 
+// Computes value * multiplier / divisor and its remainder without overflowing
+// the intermediate product. All arguments are nonnegative; divisor is at most
+// INTMAX_MAX, so doubling a remainder is representable in uint64_t.
+template <class _UInt>
+_LIBCPP_HIDE_FROM_ABI bool
+__scale_duration(_UInt __value, uint64_t __multiplier, uint64_t __divisor, _UInt& __quotient, uint64_t& __remainder) {
+  _UInt __whole{};
+  if (__builtin_mul_overflow(__value / __divisor, __multiplier, std::addressof(__whole)))
+    return false;
+
+  const uint64_t __rest = static_cast<uint64_t>(__value % __divisor);
+  _UInt __product{};
+  _UInt __fraction{};
+  if (!__builtin_mul_overflow(static_cast<_UInt>(__rest), __multiplier, std::addressof(__product))) {
+    __fraction  = __product / __divisor;
+    __remainder = static_cast<uint64_t>(__product % __divisor);
+  } else {
+    // Long division of the product, without constructing a double-width integer.
+    __remainder = 0;
+    for (unsigned __bit = 64; __bit != 0; --__bit) {
+      __fraction *= 2;
+      __remainder *= 2;
+      if (__remainder >= __divisor) {
+        __remainder -= __divisor;
+        ++__fraction;
+      }
+      if ((__multiplier >> (__bit - 1)) & 1) {
+        __remainder += __rest;
+        if (__remainder >= __divisor) {
+          __remainder -= __divisor;
+          ++__fraction;
+        }
+      }
+    }
+  }
+  return !__builtin_add_overflow(__whole, __fraction, std::addressof(__quotient));
+}
+
 template <class _Rep, class _Period>
 _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_Rep, _Period>& __out) {
   // A duration is the sum of its components and is not a point in time: they
@@ -975,13 +1070,59 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
           __fields_set::__day_of_year | __fields_set::__hours | __fields_set::__minutes | __fields_set::__seconds))
     return false;
 
-  using _Duration = duration<_Rep, _Period>;
-  _Duration __result =
-      chrono::duration_cast<_Duration>(days{__f.__day_of_year_}) + chrono::__to_time_of_day<_Duration>(__f);
+  if (__f.__day_of_year_ < 0 || __f.__hours_ < 0 || __f.__minutes_ < 0 || __f.__seconds_ < 0 || __f.__subseconds_ < 0)
+    return false;
 
-  // The minus sign belongs to the value as a whole, not to one of its
-  // components, which is also how the formatter writes it.
-  __out = __f.__negative_ ? -__result : __result;
+  // Every whole-number field fits in int, so their sum in seconds fits in uint64_t.
+  const uint64_t __seconds =
+      static_cast<uint64_t>(__f.__day_of_year_) * 86400 + static_cast<uint64_t>(__f.__hours_) * 3600 +
+      static_cast<uint64_t>(__f.__minutes_) * 60 + __f.__seconds_;
+  if constexpr (numeric_limits<_Rep>::is_integer) {
+    using _UInt = make_unsigned_t<common_type_t<_Rep, uint64_t>>;
+    _UInt __ticks{};
+    uint64_t __remainder{};
+    if (!chrono::__scale_duration(static_cast<_UInt>(__seconds), _Period::den, _Period::num, __ticks, __remainder))
+      return false;
+
+    _UInt __fraction{};
+    uint64_t __fraction_remainder{};
+    if (!chrono::__scale_duration(
+            static_cast<_UInt>(__f.__subseconds_),
+            _Period::den,
+            1000000000000000000ULL,
+            __fraction,
+            __fraction_remainder))
+      return false;
+    // Combine before truncating, including the fractional tick left by whole seconds.
+    const _UInt __extra = (__remainder + __fraction) / _Period::num;
+    if (__builtin_add_overflow(__ticks, __extra, std::addressof(__ticks)))
+      return false;
+
+    _UInt __limit = static_cast<_UInt>((numeric_limits<_Rep>::max)());
+    if (__f.__negative_) {
+      if constexpr (numeric_limits<_Rep>::is_signed)
+        ++__limit;
+      else if (__ticks != 0)
+        return false;
+    }
+    if (__ticks > __limit)
+      return false;
+
+    // The negative limit has one more unit of magnitude than the positive limit.
+    if (__f.__negative_ && __ticks != 0)
+      __out = duration<_Rep, _Period>{static_cast<_Rep>(-static_cast<_Rep>(__ticks - 1) - 1)};
+    else
+      __out = duration<_Rep, _Period>{static_cast<_Rep>(__ticks)};
+  } else {
+    long double __ticks =
+        (static_cast<long double>(__seconds) + static_cast<long double>(__f.__subseconds_) / 1000000000000000000.0L) *
+        _Period::den / _Period::num;
+    if (__f.__negative_)
+      __ticks = -__ticks;
+    if (__ticks < numeric_limits<_Rep>::lowest() || __ticks > (numeric_limits<_Rep>::max)())
+      return false;
+    __out = duration<_Rep, _Period>{static_cast<_Rep>(__ticks)};
+  }
   return true;
 }
 
