@@ -38,6 +38,8 @@
 #  include <__locale>
 #  include <__locale_dir/time.h>
 #  include <__type_traits/common_type.h>
+#  include <__type_traits/is_floating_point.h>
+#  include <__type_traits/is_integral.h>
 #  include <__type_traits/make_unsigned.h>
 #  include <cctype>
 #  include <cstdint>
@@ -1100,11 +1102,16 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
   if (__f.__day_of_year_ < 0 || __f.__hours_ < 0 || __f.__minutes_ < 0 || __f.__seconds_ < 0 || __f.__subseconds_ < 0)
     return false;
 
+  constexpr uint64_t __seconds_per_minute = 60;
+  constexpr uint64_t __seconds_per_hour   = 60 * __seconds_per_minute;
+  constexpr uint64_t __seconds_per_day    = 24 * __seconds_per_hour;
+
   // Every whole-number field fits in int, so their sum in seconds fits in uint64_t.
   const uint64_t __seconds =
-      static_cast<uint64_t>(__f.__day_of_year_) * 86400 + static_cast<uint64_t>(__f.__hours_) * 3600 +
-      static_cast<uint64_t>(__f.__minutes_) * 60 + __f.__seconds_;
-  if constexpr (numeric_limits<_Rep>::is_integer) {
+      static_cast<uint64_t>(__f.__day_of_year_) * __seconds_per_day +
+      static_cast<uint64_t>(__f.__hours_) * __seconds_per_hour +
+      static_cast<uint64_t>(__f.__minutes_) * __seconds_per_minute + __f.__seconds_;
+  if constexpr (is_integral_v<_Rep>) {
     using _UInt = make_unsigned_t<common_type_t<_Rep, uint64_t>>;
     _UInt __ticks{};
     uint64_t __remainder{};
@@ -1140,7 +1147,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
       __out = duration<_Rep, _Period>{static_cast<_Rep>(-static_cast<_Rep>(__ticks - 1) - 1)};
     else
       __out = duration<_Rep, _Period>{static_cast<_Rep>(__ticks)};
-  } else {
+  } else if constexpr (is_floating_point_v<_Rep>) {
     long double __ticks =
         (static_cast<long double>(__seconds) + static_cast<long double>(__f.__subseconds_) / 1000000000000000000.0L) *
         _Period::den / _Period::num;
@@ -1149,6 +1156,9 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
     if (__ticks < numeric_limits<_Rep>::lowest() || __ticks > (numeric_limits<_Rep>::max)())
       return false;
     __out = duration<_Rep, _Period>{static_cast<_Rep>(__ticks)};
+  } else {
+    // TODO: Support user-defined arithmetic types as duration representations.
+    return false;
   }
   return true;
 }
@@ -1351,7 +1361,7 @@ __from_stream(basic_istream<_CharT, _Traits>& __is,
     if (__is.fail())
       return __is;
 
-    // Once all fields have been parsed, resolve related fields and check their consistency.
+    // Once all fields have been parsed, resolve related fields and perform checks shared across result types.
     if (!chrono::__resolve_year(__f) || !chrono::__resolve_hour(__f)) {
       __is.setstate(ios_base::failbit);
       return __is;
