@@ -164,7 +164,7 @@ _LIBCPP_HIDE_FROM_ABI void __read_signed_digits(basic_istream<_CharT, _Traits>& 
 // Parses one locale-dependent conversion specifier with time_get.
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI bool
-__read_with_facet(basic_istream<_CharT, _Traits>& __is, tm& __tm, char __spec, char __modifier = 0) {
+__read_with_time_get(basic_istream<_CharT, _Traits>& __is, tm& __tm, char __spec, char __modifier = 0) {
   using _Iter  = istreambuf_iterator<_CharT, _Traits>;
   using _Facet = time_get<_CharT, _Iter>;
 
@@ -184,7 +184,7 @@ __read_with_facet(basic_istream<_CharT, _Traits>& __is, tm& __tm, char __spec, c
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI void __read_month_name(basic_istream<_CharT, _Traits>& __is, int& __value) {
   tm __tm{};
-  if (chrono::__read_with_facet(__is, __tm, 'b'))
+  if (chrono::__read_with_time_get(__is, __tm, 'b'))
     __value = __tm.tm_mon + 1; // tm_mon is 0-based [0, 11].
 }
 
@@ -192,7 +192,7 @@ _LIBCPP_HIDE_FROM_ABI void __read_month_name(basic_istream<_CharT, _Traits>& __i
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI void __read_weekday_name(basic_istream<_CharT, _Traits>& __is, int& __value) {
   tm __tm{};
-  if (chrono::__read_with_facet(__is, __tm, 'a'))
+  if (chrono::__read_with_time_get(__is, __tm, 'a'))
     __value = __tm.tm_wday; // tm_wday is already [0, 6], Sunday == 0.
 }
 
@@ -202,7 +202,7 @@ template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI void __read_am_pm(basic_istream<_CharT, _Traits>& __is, bool& __is_pm) {
   tm __tm{};
   __tm.tm_hour = 0;
-  if (chrono::__read_with_facet(__is, __tm, 'p'))
+  if (chrono::__read_with_time_get(__is, __tm, 'p'))
     __is_pm = __tm.tm_hour == 12;
 }
 
@@ -429,7 +429,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
   auto __read_alternative_field = [&](char __spec, int& __field, __fields_set __part) {
     __read_duration_sign();
     tm __tm{};
-    if (!chrono::__read_with_facet(__is, __tm, __spec, 'O'))
+    if (!chrono::__read_with_time_get(__is, __tm, __spec, 'O'))
       return;
 
     switch (__spec) {
@@ -475,7 +475,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
 
   auto __read_locale_format = [&](char __spec, char __modifier, bool __date, bool __time) {
     tm __tm{};
-    if (!chrono::__read_with_facet(__is, __tm, __spec, __modifier))
+    if (!chrono::__read_with_time_get(__is, __tm, __spec, __modifier))
       return;
 
     if (__date) {
