@@ -162,12 +162,20 @@ void test() {
   const sys_seconds date = sys_days{2026y / July / 20};
   check(ST("2026-07-20 04"), ST("%F %z"), date - 4h);
   check(ST("2026-07-20 0430"), ST("%F %z"), date - 4h - 30min);
+  // Offset minutes are two digits, not a clock-minute field restricted to 0-59.
+  check(ST("2026-07-20 +0160"), ST("%F %z"), date - 120min);
+  check(ST("2026-07-20 -0199"), ST("%F %z"), date + 159min);
+  check_failure(ST("2026-07-20 019"), ST("%F %z"), sys_seconds{42s});
   for (const auto& format : {ST("%F %Ez"), ST("%F %Oz")}) {
     check(ST("2026-07-20 4"), format, date - 4h);
     check(ST("2026-07-20 4:30"), format, date - 4h - 30min);
     check(ST("2026-07-20 +4:30"), format, date - 4h - 30min);
     check(ST("2026-07-20 -4:30"), format, date + 4h + 30min);
+    check(ST("2026-07-20 1:60"), format, date - 120min);
+    check(ST("2026-07-20 +01:90"), format, date - 150min);
+    check(ST("2026-07-20 -1:99"), format, date + 159min);
     check_failure(ST("2026-07-20 4:"), format, sys_seconds{42s});
+    check_failure(ST("2026-07-20 4:9"), format, sys_seconds{42s});
   }
   check_failure(ST("2026-07-20 4"), ST("%F %z"), sys_seconds{42s});
   check_failure(ST("2026-07-20 +"), ST("%F %z"), sys_seconds{42s});

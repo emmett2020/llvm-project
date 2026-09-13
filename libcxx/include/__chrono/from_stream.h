@@ -44,6 +44,7 @@
 #  include <ctime>
 #  include <istream>
 #  include <limits>
+#  include <string>
 
 #  if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
 #    pragma GCC system_header
@@ -285,7 +286,7 @@ _LIBCPP_HIDE_FROM_ABI void __read_utc_offset(basic_istream<_CharT, _Traits>& __i
     __has_minutes = chrono::__peek(__is, __c) && __c >= _CharT('0') && __c <= _CharT('9');
   }
 
-  if (__has_minutes && (chrono::__read_unsigned(__is, 2, __minutes) != 2 || __minutes > 59)) {
+  if (__has_minutes && chrono::__read_unsigned(__is, 2, __minutes) != 2) {
     __is.setstate(ios_base::failbit);
     return;
   }
@@ -302,9 +303,8 @@ __read_time_zone_abbrev(basic_istream<_CharT, _Traits>& __is, basic_string<_Char
   int __count = 0;
   for (_CharT __c{}; chrono::__peek(__is, __c); ++__count) {
     char __narrow = __ctype.narrow(__c, '\0');
-    if (!std::isdigit(static_cast<unsigned char>(__narrow)) && !('a' <= __narrow && __narrow <= 'z') &&
-        !('A' <= __narrow && __narrow <= 'Z') && __narrow != '_' && __narrow != '/' && __narrow != '-' &&
-        __narrow != '+')
+    if (!std::isdigit(static_cast<unsigned char>(__narrow)) && ('a' > __narrow || __narrow > 'z') &&
+        ('A' > __narrow || __narrow > 'Z') && __narrow != '_' && __narrow != '/' && __narrow != '-' && __narrow != '+')
       break;
 
     __is.get();
@@ -725,6 +725,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
         __f.__set(__fields_set::__seconds);
       break;
     }
+
     case 'u': {
       int __weekday = 0;
       chrono::__read_unsigned(__is, __has_width ? __width : 1, __weekday);
@@ -738,6 +739,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       }
       break;
     }
+
     case 'w': {
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__weekday_);
@@ -749,29 +751,34 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
         __f.__set(__fields_set::__weekday);
       break;
     }
+
     case 'U':
       // TODO: Parse the locale's alternative week number for %OU.
       chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__week_sun_);
       if (!__is.fail())
         __f.__set(__fields_set::__week_sun);
       break;
+
     case 'V':
       chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__iso_week_);
       if (!__is.fail())
         __f.__set(__fields_set::__iso_week);
       break;
+
     case 'W':
       // TODO: Parse the locale's alternative week number for %OW.
       chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__week_mon_);
       if (!__is.fail())
         __f.__set(__fields_set::__week_mon);
       break;
+
     case 'x': {
       tm __tm{};
       if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier))
         __assign_date(__tm);
       break;
     }
+
     case 'X': {
       __consume_duration_minus();
       tm __tm{};
@@ -779,6 +786,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
         __assign_time(__tm);
       break;
     }
+
     case 'y':
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__year_of_century_);
@@ -795,6 +803,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__year_of_century);
       break;
+
     case 'Y':
       if (__modifier == 'E') {
         tm __tm{};
@@ -810,6 +819,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__year);
       break;
+
     case 'z':
       chrono::__read_utc_offset(__is, __modifier != 0, __f.__utc_offset_);
       if (!__is.fail()) {
@@ -818,9 +828,11 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
           *__offset = minutes{__f.__utc_offset_};
       }
       break;
+
     case 'Z':
       chrono::__read_time_zone_abbrev(__is, __abbrev);
       break;
+
     case 'n':
       // %n matches exactly one white space character, %t at most one. Combining
       // them and a literal space matches a range, e.g. "%n%t%t" matches one to
@@ -842,8 +854,8 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
   }
 }
 
-// Normalizes %C/%y and %I/%p, rejecting inconsistent fields.
-_LIBCPP_HIDE_FROM_ABI inline bool __finalize(__fields_storage& __f) {
+// Resolves %C/%y into a year, rejecting inconsistencies with %Y.
+_LIBCPP_HIDE_FROM_ABI inline bool __resolve_year(__fields_storage& __f) {
   // %y is the year without its century. With %C the two are concatenated;
   // without it, [69, 99] refers to 1969-1999 and [00, 68] to 2000-2068.
   if (__f.__has(__fields_set::__year_of_century)) {
@@ -872,6 +884,11 @@ _LIBCPP_HIDE_FROM_ABI inline bool __finalize(__fields_storage& __f) {
       return false;
   }
 
+  return true;
+}
+
+// Resolves %I/%p into a 24-hour value, rejecting inconsistencies with %H.
+_LIBCPP_HIDE_FROM_ABI inline bool __resolve_hour(__fields_storage& __f) {
   // %I is the hour on the 12-hour clock, which %p disambiguates. Without %p the
   // hour is taken as it was written.
   if (__f.__has(__fields_set::__hour12)) {
@@ -1326,14 +1343,32 @@ __from_stream(basic_istream<_CharT, _Traits>& __is,
 
   if (__s) {
     __fields_storage __f{};
-    chrono::__parse_from_stream(__is, __fmt, __f, __abbrev, __offset, __parse_options_v<_Tp>);
-    if (!__is.fail()) {
-      _Tp __out{};
-      if (chrono::__finalize(__f) && chrono::__from_fields(__f, __out))
-        __value = __out;
-      else
-        __is.setstate(ios_base::failbit);
+    basic_string<_CharT, _Traits> __parsed_abbrev;
+
+    // Parse the input according to the format and collect the fields.
+    chrono::__parse_from_stream(
+        __is, __fmt, __f, __abbrev ? &__parsed_abbrev : nullptr, nullptr, __parse_options_v<_Tp>);
+    if (__is.fail())
+      return __is;
+
+    // Once all fields have been parsed, resolve related fields and check their consistency.
+    if (!chrono::__resolve_year(__f) || !chrono::__resolve_hour(__f)) {
+      __is.setstate(ios_base::failbit);
+      return __is;
     }
+
+    // Construct the requested result from the parsed fields.
+    _Tp __out{};
+    if (!chrono::__from_fields(__f, __out)) {
+      __is.setstate(ios_base::failbit);
+      return __is;
+    }
+
+    if (__abbrev && !__parsed_abbrev.empty())
+      __abbrev->assign(__parsed_abbrev.data(), __parsed_abbrev.size());
+    if (__offset && __f.__has(__fields_set::__utc_offset))
+      *__offset = minutes{__f.__utc_offset_};
+    __value = __out;
   }
 
   return __is;
