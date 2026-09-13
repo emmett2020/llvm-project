@@ -42,6 +42,7 @@
 #  include <ctime>
 #  include <istream>
 #  include <limits>
+#  include <streambuf>
 
 #  if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
 #    pragma GCC system_header
@@ -161,18 +162,67 @@ _LIBCPP_HIDE_FROM_ABI void __read_signed_digits(basic_istream<_CharT, _Traits>& 
     __value = -static_cast<int>(__result.__value);
 }
 
+// Exposes at most '__max_chars' characters from another stream buffer.
+template <class _CharT, class _Traits>
+class __width_limited_streambuf : public basic_streambuf<_CharT, _Traits> {
+  using __base     = basic_streambuf<_CharT, _Traits>;
+  using __int_type = typename _Traits::int_type;
+
+  __base* __source_;
+  int __remaining_;
+
+public:
+  _LIBCPP_HIDE_FROM_ABI __width_limited_streambuf(__base* __source, int __max_chars)
+      : __source_(__source), __remaining_(__max_chars) {}
+
+  _LIBCPP_HIDE_FROM_ABI bool __exhausted() const { return __remaining_ == 0; }
+
+protected:
+  _LIBCPP_HIDE_FROM_ABI __int_type underflow() override {
+    return __remaining_ == 0 ? _Traits::eof() : __source_->sgetc();
+  }
+
+  _LIBCPP_HIDE_FROM_ABI __int_type uflow() override {
+    if (__remaining_ == 0)
+      return _Traits::eof();
+
+    __int_type __result = __source_->sbumpc();
+    if (!_Traits::eq_int_type(__result, _Traits::eof()))
+      --__remaining_;
+    return __result;
+  }
+
+  _LIBCPP_HIDE_FROM_ABI streamsize xsgetn(_CharT* __output, streamsize __count) override {
+    streamsize __bounded_count = __count < __remaining_ ? __count : __remaining_;
+    streamsize __result        = __source_->sgetn(__output, __bounded_count);
+    __remaining_ -= static_cast<int>(__result);
+    return __result;
+  }
+};
+
 // Parses one locale-dependent conversion specifier with time_get.
 template <class _CharT, class _Traits>
-_LIBCPP_HIDE_FROM_ABI bool
-__read_with_facet(basic_istream<_CharT, _Traits>& __is, tm& __tm, char __spec, char __modifier = 0) {
+_LIBCPP_HIDE_FROM_ABI bool __read_with_facet(
+    basic_istream<_CharT, _Traits>& __is, tm& __tm, char __spec, char __modifier = 0, int __max_chars = -1) {
   using _Iter  = istreambuf_iterator<_CharT, _Traits>;
   using _Facet = time_get<_CharT, _Iter>;
 
   ios_base::iostate __err = ios_base::goodbit;
   const _Facet& __tf      = std::use_facet<_Facet>(__is.getloc());
-  __tf.get(_Iter(__is), _Iter(), __is, __err, std::addressof(__tm), __spec, __modifier);
+  if (__max_chars < 0)
+    __tf.get(_Iter(__is), _Iter(), __is, __err, std::addressof(__tm), __spec, __modifier);
+  else {
+    chrono::__width_limited_streambuf<_CharT, _Traits> __buf(__is.rdbuf(), __max_chars);
+    __tf.get(_Iter(std::addressof(__buf)), _Iter(), __is, __err, std::addressof(__tm), __spec, __modifier);
 
-  // Propagate the facet's state (eofbit alone does not make the stream fail()).
+    // EOF at the artificial width boundary is not EOF on the input stream.
+    if ((__err & ios_base::eofbit) && __buf.__exhausted() &&
+        !_Traits::eq_int_type(__is.rdbuf()->sgetc(), _Traits::eof()))
+      __err &= ~ios_base::eofbit;
+  }
+
+  // Propagate eofbit as well as parse failures. Reaching EOF after a
+  // successful match is not itself a parsing failure.
   if (__err != ios_base::goodbit)
     __is.setstate(__err);
 
@@ -362,9 +412,7 @@ _LIBCPP_HIDE_FROM_ABI constexpr bool __modifier_allowed(char __modifier, char __
   case 'm':
   case 'M':
   case 'S':
-  case 'u':
   case 'U':
-  case 'V':
   case 'w':
   case 'W':
   case 'y':
@@ -419,12 +467,47 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
   int __width      = 0;
   bool __has_width = false;
 
-  auto __read_field = [&](int __default_width, auto& __field, __fields_set __part) {
-    __read_duration_sign();
-    chrono::__read_digits(__is, __has_width ? __width : __default_width, __field);
-    if (!__is.fail())
-      __f.__set(__part);
-  };
+  auto __read_field =
+      [&](int __default_width, auto& __field, __fields_set __part, char __spec = 0, char __modifier = 0) {
+        __read_duration_sign();
+        if (__modifier == 'O') {
+          tm __tm{};
+          if (!chrono::__read_with_facet(__is, __tm, __spec, __modifier, __has_width ? __width : __default_width))
+            return;
+
+          switch (__spec) {
+          case 'd':
+          case 'e':
+            __field = __tm.tm_mday;
+            break;
+          case 'm':
+            __field = __tm.tm_mon + 1;
+            break;
+          case 'H':
+            __field = __tm.tm_hour;
+            break;
+          case 'I':
+            // Keep the 12-hour value separate from %p until the fields are combined.
+            __field = __tm.tm_hour == 0 ? 12 : __tm.tm_hour;
+            break;
+          case 'M':
+            __field = __tm.tm_min;
+            break;
+          case 'w':
+            __field = __tm.tm_wday;
+            break;
+          case 'y': {
+            // tm_year is relative to 1900; %Oy supplies only the last two digits.
+            int64_t __year = static_cast<int64_t>(__tm.tm_year) + 1900;
+            __field        = static_cast<int>((__year < 0 ? -__year : __year) % 100);
+            break;
+          }
+          }
+        } else
+          chrono::__read_digits(__is, __has_width ? __width : __default_width, __field);
+        if (!__is.fail())
+          __f.__set(__part);
+      };
 
   auto __read_signed_field = [&](int __default_width, auto& __field, __fields_set __part) {
     chrono::__read_signed_digits(__is, __has_width ? __width : __default_width, __field);
@@ -510,7 +593,12 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     case 't':
       __skip_one_whitespace();
       break;
-
+    case 'a':
+    case 'A':
+      chrono::__read_weekday_name(__is, __f.__weekday_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__weekday);
+      break;
     case 'b':
     case 'B':
     case 'h':
@@ -518,20 +606,21 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__month);
       break;
-    case 'a':
-    case 'A':
-      chrono::__read_weekday_name(__is, __f.__weekday_);
-      if (!__is.fail())
-        __f.__set(__fields_set::__weekday);
+    case 'c':
+      __read_locale_format('c', __modifier, /*__date=*/true, /*__time=*/true);
       break;
+    case 'C':
+      __read_signed_field(2, __f.__century_, __fields_set::__century);
+      break;
+    case 'd':
+    case 'e':
+      __read_field(2, __f.__day_, __fields_set::__day, __spec, __modifier);
+      break;
+
     case 'p':
       chrono::__read_am_pm(__is, __f.__is_pm_);
       if (!__is.fail())
         __f.__set(__fields_set::__am_pm);
-      break;
-
-    case 'c':
-      __read_locale_format('c', __modifier, /*__date=*/true, /*__time=*/true);
       break;
     case 'x':
       __read_locale_format('x', __modifier, /*__date=*/true, /*__time=*/false);
@@ -542,12 +631,8 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     case 'r':
       __read_locale_format('r', __modifier, /*__date=*/false, /*__time=*/true);
       break;
-
-    case 'C':
-      __read_signed_field(2, __f.__century_, __fields_set::__century);
-      break;
     case 'y':
-      __read_field(2, __f.__year_of_century_, __fields_set::__year_of_century);
+      __read_field(2, __f.__year_of_century_, __fields_set::__year_of_century, __spec, __modifier);
       if (!__is.fail() && (__f.__year_of_century_ < 0 || __f.__year_of_century_ > 99))
         __is.setstate(ios_base::failbit);
       break;
@@ -570,28 +655,21 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       }
       break;
     }
-
     case 'm':
-      __read_field(2, __f.__month_, __fields_set::__month);
+      __read_field(2, __f.__month_, __fields_set::__month, __spec, __modifier);
       break;
-    case 'e':
-      // %e is the space padded day of month, so the digits may be preceded by a
-      // space; %d is the zero padded form.
-      if (_CharT __c{}; chrono::__peek(__is, __c) && __ctype.is(ctype_base::space, __c))
-        __is.get();
-      [[fallthrough]];
-    case 'd':
-      __read_field(2, __f.__day_, __fields_set::__day);
-      break;
+
     case 'j':
       // The day of the year for a calendar type; a plain number of days when
       // the target is a duration, in which case it is not limited to [1, 366].
       __read_field(3, __f.__day_of_year_, __fields_set::__day_of_year);
       break;
     case 'U':
+      // TODO: Parse the locale's alternative week number for %OU.
       __read_field(2, __f.__week_sun_, __fields_set::__week_sun);
       break;
     case 'W':
+      // TODO: Parse the locale's alternative week number for %OW.
       __read_field(2, __f.__week_mon_, __fields_set::__week_mon);
       break;
     case 'V':
@@ -611,31 +689,25 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
     }
     case 'w': {
-      int __weekday = 0;
-      chrono::__read_digits(__is, __has_width ? __width : 1, __weekday);
-      if (!__is.fail()) {
-        if (__weekday < 0 || __weekday > 6)
-          __is.setstate(ios_base::failbit);
-        else {
-          __f.__weekday_ = __weekday;
-          __f.__set(__fields_set::__weekday);
-        }
-      }
+      __read_field(1, __f.__weekday_, __fields_set::__weekday, __spec, __modifier);
+      if (!__is.fail() && (__f.__weekday_ < 0 || __f.__weekday_ > 6))
+        __is.setstate(ios_base::failbit);
       break;
     }
 
     case 'H':
-      __read_field(2, __f.__hours_, __fields_set::__hours);
+      __read_field(2, __f.__hours_, __fields_set::__hours, __spec, __modifier);
       break;
     case 'I':
-      __read_field(2, __f.__hour12_, __fields_set::__hour12);
+      __read_field(2, __f.__hour12_, __fields_set::__hour12, __spec, __modifier);
       if (!__is.fail() && (__f.__hour12_ < 1 || __f.__hour12_ > 12))
         __is.setstate(ios_base::failbit);
       break;
     case 'M':
-      __read_field(2, __f.__minutes_, __fields_set::__minutes);
+      __read_field(2, __f.__minutes_, __fields_set::__minutes, __spec, __modifier);
       break;
     case 'S': {
+      // TODO: Parse the locale's alternative seconds representation for %OS.
       // Without an explicit width the field is two digits, plus the decimal
       // point and the fractional digits the target can represent.
       int __fractional_width = __options.__fractional_width_;
