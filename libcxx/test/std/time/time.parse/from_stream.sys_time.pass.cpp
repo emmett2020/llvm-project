@@ -120,6 +120,38 @@ static void test() {
   // A width on %F applies only to %Y; %m and %d retain their default widths.
   assert((parse<CharT, Seconds>(ST("002026-07-20"), ST("%6F")) == date));
 
+  // ISO week dates combine the separately parsed year, week, and weekday fields.
+  assert((parse<CharT, Seconds>(ST("2026-W30-1"), ST("%G-W%V-%u")) == date));
+  assert((parse<CharT, Seconds>(ST("26-W30-1"), ST("%g-W%V-%u")) == date));
+
+  // A leading minus sign applies to all duration fields, including fractions.
+  struct DurationCase {
+    std::basic_string<CharT> input;
+    std::basic_string<CharT> format;
+    milliseconds expected;
+  };
+  const DurationCase duration_cases[] = {
+      {ST("-01:30"), ST("%H:%M"), -90min},
+      {ST("-30:15"), ST("%M:%S"), -(30min + 15s)},
+      {ST("-1.25"), ST("%S"), -1250ms},
+      {ST("-2 01:30"), ST("%j %H:%M"), -(48h + 1h + 30min)},
+      {ST("-01:30"), ST("%R"), -90min},
+  };
+  for (const auto& c : duration_cases) {
+    std::basic_istringstream<CharT> stream(c.input);
+    milliseconds result{};
+    from_stream(stream, c.format.c_str(), result);
+    assert(!stream.fail());
+    assert(result == c.expected);
+  }
+  for (const auto& c : {DurationCase{ST("1:-30"), ST("%H:%M"), 42ms}, DurationCase{ST("-1."), ST("%S"), 42ms}}) {
+    std::basic_istringstream<CharT> stream(c.input);
+    milliseconds result = c.expected;
+    from_stream(stream, c.format.c_str(), result);
+    assert(stream.fail());
+    assert(result == c.expected);
+  }
+
   // Missing time-of-day defaults to midnight.
   assert((parse<CharT, Seconds>(ST("2026-07-20"), ST("%F")) == date));
 

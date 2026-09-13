@@ -96,10 +96,11 @@ struct __read_digits_result {
   bool __overflow   = false;
 };
 
+// Extracts digits and reports their value, count, and overflow status.
 // After overflow, digits are still consumed up to '__max_digits'.
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI __read_digits_result
-__read_bounded_digits(basic_istream<_CharT, _Traits>& __is, int __max_digits, uint64_t __max_value) {
+__read_digits(basic_istream<_CharT, _Traits>& __is, int __max_digits, uint64_t __max_value) {
   uint64_t __result = 0;
   int __digits_read = 0;
   bool __overflow   = false;
@@ -121,10 +122,11 @@ __read_bounded_digits(basic_istream<_CharT, _Traits>& __is, int __max_digits, ui
   return {__result, __digits_read, __overflow};
 }
 
-// Reads one to '__max_digits' digits. Failure leaves '__value' unchanged.
+// Reads an integer without a sign into int. Returns the number of digits read.
+// Failure leaves '__value' unchanged.
 template <class _CharT, class _Traits>
-_LIBCPP_HIDE_FROM_ABI int __read_digits(basic_istream<_CharT, _Traits>& __is, int __max_digits, int& __value) {
-  auto __result = chrono::__read_bounded_digits(__is, __max_digits, (numeric_limits<int>::max)());
+_LIBCPP_HIDE_FROM_ABI int __read_unsigned(basic_istream<_CharT, _Traits>& __is, int __max_digits, int& __value) {
+  auto __result = chrono::__read_digits(__is, __max_digits, (numeric_limits<int>::max)());
 
   if (__result.__digits_read == 0 || __result.__overflow)
     __is.setstate(ios_base::failbit);
@@ -134,9 +136,10 @@ _LIBCPP_HIDE_FROM_ABI int __read_digits(basic_istream<_CharT, _Traits>& __is, in
   return __result.__digits_read;
 }
 
+// Reads an integer with an optional '+' or '-'. Failure leaves '__value' unchanged.
 // The sign does not count towards '__max_digits'.
 template <class _CharT, class _Traits>
-_LIBCPP_HIDE_FROM_ABI void __read_signed_digits(basic_istream<_CharT, _Traits>& __is, int __max_digits, int& __value) {
+_LIBCPP_HIDE_FROM_ABI void __read_signed(basic_istream<_CharT, _Traits>& __is, int __max_digits, int& __value) {
   bool __negative = false;
   if (_CharT __c{}; chrono::__peek(__is, __c) && (_Traits::eq(__c, _CharT('-')) || _Traits::eq(__c, _CharT('+')))) {
     __negative = _Traits::eq(__c, _CharT('-'));
@@ -147,7 +150,7 @@ _LIBCPP_HIDE_FROM_ABI void __read_signed_digits(basic_istream<_CharT, _Traits>& 
   const uint64_t __negative_limit = __positive_limit + 1;
   const uint64_t __limit          = __negative ? __negative_limit : __positive_limit;
 
-  auto __result = chrono::__read_bounded_digits(__is, __max_digits, __limit);
+  auto __result = chrono::__read_digits(__is, __max_digits, __limit);
   if (__result.__digits_read == 0 || __result.__overflow) {
     __is.setstate(ios_base::failbit);
     return;
@@ -211,12 +214,11 @@ template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI void
 __read_seconds(basic_istream<_CharT, _Traits>& __is, int __width, int __fractional_width, __fields_storage& __f) {
   int __seconds     = 0;
-  int __digits_read = chrono::__read_digits(__is, __width, __seconds);
+  int __digits_read = chrono::__read_unsigned(__is, __width, __seconds);
   if (__is.fail())
     return;
 
   __f.__seconds_ = __seconds;
-  __f.__set(__fields_set::__seconds);
 
   // A fractional part needs a decimal point and at least one digit.
   int __remaining = __width - __digits_read;
@@ -232,7 +234,7 @@ __read_seconds(basic_istream<_CharT, _Traits>& __is, int __width, int __fraction
   __is.get();
   --__remaining;
 
-  auto __fraction = chrono::__read_bounded_digits(
+  auto __fraction = chrono::__read_digits(
       __is, __remaining < __fractional_width ? __remaining : __fractional_width, (numeric_limits<int64_t>::max)());
   if (__fraction.__digits_read == 0 || __fraction.__overflow) {
     __is.setstate(ios_base::failbit);
@@ -256,7 +258,7 @@ _LIBCPP_HIDE_FROM_ABI void __read_utc_offset(basic_istream<_CharT, _Traits>& __i
   __is.get();
 
   int __hours       = 0;
-  int __digits_read = chrono::__read_digits(__is, 2, __hours);
+  int __digits_read = chrono::__read_unsigned(__is, 2, __hours);
 
   // %z requires exactly two hour digits, while %Ez and %Oz allow one or two.
   if (__is.fail() || (!__is_modified && __digits_read != 2)) {
@@ -276,7 +278,7 @@ _LIBCPP_HIDE_FROM_ABI void __read_utc_offset(basic_istream<_CharT, _Traits>& __i
     __has_minutes = chrono::__peek(__is, __c) && __c >= _CharT('0') && __c <= _CharT('9');
   }
 
-  if (__has_minutes && (chrono::__read_digits(__is, 2, __minutes) != 2 || __minutes > 59)) {
+  if (__has_minutes && (chrono::__read_unsigned(__is, 2, __minutes) != 2 || __minutes > 59)) {
     __is.setstate(ios_base::failbit);
     return;
   }
@@ -385,11 +387,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     __parse_options __options) {
   const auto& __ctype = std::use_facet<ctype<_CharT> >(__is.getloc());
 
-  auto __skip_whitespace = [&] {
-    for (_CharT __c{}; chrono::__peek(__is, __c) && __ctype.is(ctype_base::space, __c);)
-      __is.get();
-  };
-
   auto __skip_one_whitespace = [&] {
     _CharT __c{};
     if (!chrono::__peek(__is, __c) || !__ctype.is(ctype_base::space, __c))
@@ -404,8 +401,9 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       __is.setstate(ios_base::failbit);
   };
 
-  // A duration's sign precedes its first parsed field, not each field.
-  auto __read_duration_sign = [&] {
+  // Read a leading minus sign only for a duration, before any fields are parsed.
+  // The sign applies to the entire duration, not to an individual field.
+  auto __consume_duration_minus = [&] {
     if (!__options.__is_duration_ || __f.__present_ != __fields_set::__none)
       return;
 
@@ -418,16 +416,8 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
   int __width      = 0;
   bool __has_width = false;
 
-  auto __read_field = [&](int __default_width, auto& __field, __fields_set __part) {
-    __read_duration_sign();
-    chrono::__read_digits(__is, __has_width ? __width : __default_width, __field);
-    if (!__is.fail())
-      __f.__set(__part);
-  };
-
   // Parses an O-modified field through time_get and converts its tm member.
-  auto __read_alternative_field = [&](char __spec, int& __field, __fields_set __part) {
-    __read_duration_sign();
+  auto __read_alternative_field = [&](char __spec, int& __field) {
     tm __tm{};
     if (!chrono::__read_with_time_get(__is, __tm, __spec, 'O'))
       return;
@@ -463,33 +453,20 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       __is.setstate(ios_base::failbit);
       return;
     }
-    if (!__is.fail())
-      __f.__set(__part);
   };
 
-  auto __read_signed_field = [&](int __default_width, auto& __field, __fields_set __part) {
-    chrono::__read_signed_digits(__is, __has_width ? __width : __default_width, __field);
-    if (!__is.fail())
-      __f.__set(__part);
+  auto __assign_date = [&](const tm& __tm) {
+    __f.__year_  = __tm.tm_year + 1900;
+    __f.__month_ = __tm.tm_mon + 1;
+    __f.__day_   = __tm.tm_mday;
+    __f.__set(__fields_set::__year | __fields_set::__month | __fields_set::__day);
   };
 
-  auto __read_locale_format = [&](char __spec, char __modifier, bool __date, bool __time) {
-    tm __tm{};
-    if (!chrono::__read_with_time_get(__is, __tm, __spec, __modifier))
-      return;
-
-    if (__date) {
-      __f.__year_  = __tm.tm_year + 1900;
-      __f.__month_ = __tm.tm_mon + 1;
-      __f.__day_   = __tm.tm_mday;
-      __f.__set(__fields_set::__year | __fields_set::__month | __fields_set::__day);
-    }
-    if (__time) {
-      __f.__hours_   = __tm.tm_hour;
-      __f.__minutes_ = __tm.tm_min;
-      __f.__seconds_ = __tm.tm_sec;
-      __f.__set(__fields_set::__hours | __fields_set::__minutes | __fields_set::__seconds);
-    }
+  auto __assign_time = [&](const tm& __tm) {
+    __f.__hours_   = __tm.tm_hour;
+    __f.__minutes_ = __tm.tm_min;
+    __f.__seconds_ = __tm.tm_sec;
+    __f.__set(__fields_set::__hours | __fields_set::__minutes | __fields_set::__seconds);
   };
 
   while (*__fmt != _CharT('\0')) {
@@ -497,7 +474,8 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       return;
 
     if (__ctype.is(ctype_base::space, *__fmt)) {
-      __skip_whitespace();
+      while (__skip_one_whitespace()) {
+      }
       ++__fmt;
       continue;
     }
@@ -551,18 +529,28 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__month);
       break;
-    case 'c':
-      __read_locale_format('c', __modifier, /*__date=*/true, /*__time=*/true);
+    case 'c': {
+      tm __tm{};
+      if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier)) {
+        __assign_date(__tm);
+        __assign_time(__tm);
+      }
       break;
+    }
     case 'C':
-      __read_signed_field(2, __f.__century_, __fields_set::__century);
+      chrono::__read_signed(__is, __has_width ? __width : 2, __f.__century_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__century);
       break;
     case 'd':
     case 'e':
+      __consume_duration_minus();
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__day_, __fields_set::__day);
+        __read_alternative_field(__spec, __f.__day_);
       else
-        __read_field(2, __f.__day_, __fields_set::__day);
+        chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__day_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__day);
       break;
     case 'D':
       chrono::__parse_from_stream(
@@ -570,14 +558,16 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
     case 'F':
       // A width on %F applies only to %Y.
-      __read_signed_field(4, __f.__year_, __fields_set::__year);
-      if (!__is.fail())
+      chrono::__read_signed(__is, __has_width ? __width : 4, __f.__year_);
+      if (!__is.fail()) {
+        __f.__set(__fields_set::__year);
         chrono::__parse_from_stream(
             __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "-%m-%d"), __f, __abbrev, __offset, __options);
+      }
       break;
     case 'g': {
       int __year_of_century = 0;
-      chrono::__read_digits(__is, __has_width ? __width : 2, __year_of_century);
+      chrono::__read_unsigned(__is, __has_width ? __width : 2, __year_of_century);
       if (!__is.fail()) {
         if (__year_of_century < 0 || __year_of_century > 99)
           __is.setstate(ios_base::failbit);
@@ -589,47 +579,67 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
     }
     case 'G':
-      __read_signed_field(4, __f.__iso_year_, __fields_set::__iso_year);
+      chrono::__read_signed(__is, __has_width ? __width : 4, __f.__iso_year_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__iso_year);
       break;
     case 'H':
+      __consume_duration_minus();
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__hours_, __fields_set::__hours);
+        __read_alternative_field(__spec, __f.__hours_);
       else
-        __read_field(2, __f.__hours_, __fields_set::__hours);
+        chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__hours_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__hours);
       break;
     case 'I':
+      __consume_duration_minus();
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__hour12_, __fields_set::__hour12);
+        __read_alternative_field(__spec, __f.__hour12_);
       else
-        __read_field(2, __f.__hour12_, __fields_set::__hour12);
+        chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__hour12_);
       if (!__is.fail() && (__f.__hour12_ < 1 || __f.__hour12_ > 12))
         __is.setstate(ios_base::failbit);
+      if (!__is.fail())
+        __f.__set(__fields_set::__hour12);
       break;
     case 'j':
       // The day of the year for a calendar type; a plain number of days when
       // the target is a duration, in which case it is not limited to [1, 366].
-      __read_field(3, __f.__day_of_year_, __fields_set::__day_of_year);
+      __consume_duration_minus();
+      chrono::__read_unsigned(__is, __has_width ? __width : 3, __f.__day_of_year_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__day_of_year);
       break;
     case 'm':
+      __consume_duration_minus();
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__month_, __fields_set::__month);
+        __read_alternative_field(__spec, __f.__month_);
       else
-        __read_field(2, __f.__month_, __fields_set::__month);
+        chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__month_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__month);
       break;
     case 'M':
+      __consume_duration_minus();
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__minutes_, __fields_set::__minutes);
+        __read_alternative_field(__spec, __f.__minutes_);
       else
-        __read_field(2, __f.__minutes_, __fields_set::__minutes);
+        chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__minutes_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__minutes);
       break;
     case 'p':
       chrono::__read_am_pm(__is, __f.__is_pm_);
       if (!__is.fail())
         __f.__set(__fields_set::__am_pm);
       break;
-    case 'r':
-      __read_locale_format('r', __modifier, /*__date=*/false, /*__time=*/true);
+    case 'r': {
+      tm __tm{};
+      if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier))
+        __assign_time(__tm);
       break;
+    }
     case 'R':
       chrono::__parse_from_stream(__is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%H:%M"), __f, __abbrev, __offset, __options);
       break;
@@ -643,13 +653,15 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       // point and the fractional digits the target can represent.
       int __fractional_width = __options.__fractional_width_;
       int __default_width    = __fractional_width == 0 ? 2 : 3 + __fractional_width;
-      __read_duration_sign();
+      __consume_duration_minus();
       chrono::__read_seconds(__is, __has_width ? __width : __default_width, __fractional_width, __f);
+      if (!__is.fail())
+        __f.__set(__fields_set::__seconds);
       break;
     }
     case 'u': {
       int __weekday = 0;
-      chrono::__read_digits(__is, __has_width ? __width : 1, __weekday);
+      chrono::__read_unsigned(__is, __has_width ? __width : 1, __weekday);
       if (!__is.fail()) {
         if (__weekday < 1 || __weekday > 7)
           __is.setstate(ios_base::failbit);
@@ -661,45 +673,68 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
     }
     case 'w': {
+      __consume_duration_minus();
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__weekday_, __fields_set::__weekday);
+        __read_alternative_field(__spec, __f.__weekday_);
       else
-        __read_field(1, __f.__weekday_, __fields_set::__weekday);
+        chrono::__read_unsigned(__is, __has_width ? __width : 1, __f.__weekday_);
       if (!__is.fail() && (__f.__weekday_ < 0 || __f.__weekday_ > 6))
         __is.setstate(ios_base::failbit);
+      if (!__is.fail())
+        __f.__set(__fields_set::__weekday);
       break;
     }
     case 'U':
       // TODO: Parse the locale's alternative week number for %OU.
-      __read_field(2, __f.__week_sun_, __fields_set::__week_sun);
+      __consume_duration_minus();
+      chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__week_sun_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__week_sun);
       break;
     case 'V':
-      __read_field(2, __f.__iso_week_, __fields_set::__iso_week);
+      __consume_duration_minus();
+      chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__iso_week_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__iso_week);
       break;
     case 'W':
       // TODO: Parse the locale's alternative week number for %OW.
-      __read_field(2, __f.__week_mon_, __fields_set::__week_mon);
+      __consume_duration_minus();
+      chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__week_mon_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__week_mon);
       break;
-    case 'x':
-      __read_locale_format('x', __modifier, /*__date=*/true, /*__time=*/false);
+    case 'x': {
+      tm __tm{};
+      if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier))
+        __assign_date(__tm);
       break;
-    case 'X':
-      __read_locale_format('X', __modifier, /*__date=*/false, /*__time=*/true);
+    }
+    case 'X': {
+      tm __tm{};
+      if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier))
+        __assign_time(__tm);
       break;
+    }
     case 'y':
+      __consume_duration_minus();
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__year_of_century_, __fields_set::__year_of_century);
+        __read_alternative_field(__spec, __f.__year_of_century_);
       else if (__modifier == 'E') {
         // TODO: Parse %Ey relative to the locale's alternative era (%EC).
         // Preserve the numeric fallback until alternative eras are supported.
-        __read_field(2, __f.__year_of_century_, __fields_set::__year_of_century);
+        chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__year_of_century_);
       } else
-        __read_field(2, __f.__year_of_century_, __fields_set::__year_of_century);
+        chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__year_of_century_);
       if (!__is.fail() && (__f.__year_of_century_ < 0 || __f.__year_of_century_ > 99))
         __is.setstate(ios_base::failbit);
+      if (!__is.fail())
+        __f.__set(__fields_set::__year_of_century);
       break;
     case 'Y':
-      __read_signed_field(4, __f.__year_, __fields_set::__year);
+      chrono::__read_signed(__is, __has_width ? __width : 4, __f.__year_);
+      if (!__is.fail())
+        __f.__set(__fields_set::__year);
       break;
     case 'z':
       chrono::__read_utc_offset(__is, __modifier != 0, __f.__utc_offset_);
