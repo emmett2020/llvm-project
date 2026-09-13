@@ -608,6 +608,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       chrono::__parse_from_stream(
           __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%m/%d/%y"), __f, __abbrev, __offset, __options);
       break;
+
     case 'F':
       // A width on %F applies only to %Y.
       chrono::__read_signed(__is, __has_width ? __width : 4, __f.__year_);
@@ -617,6 +618,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
             __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "-%m-%d"), __f, __abbrev, __offset, __options);
       }
       break;
+
     case 'g': {
       int __year_of_century = 0;
       chrono::__read_unsigned(__is, __has_width ? __width : 2, __year_of_century);
@@ -630,11 +632,13 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       }
       break;
     }
+
     case 'G':
       chrono::__read_signed(__is, __has_width ? __width : 4, __f.__iso_year_);
       if (!__is.fail())
         __f.__set(__fields_set::__iso_year);
       break;
+
     case 'H':
       __consume_duration_minus();
       if (__modifier == 'O')
@@ -644,6 +648,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__hours);
       break;
+
     case 'I':
       __consume_duration_minus();
       if (__modifier == 'O')
@@ -655,6 +660,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__hour12);
       break;
+
     case 'j':
       // The day of the year for a calendar type; a plain number of days when
       // the target is a duration, in which case it is not limited to [1, 366].
@@ -663,6 +669,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__day_of_year);
       break;
+
     case 'm':
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__month_);
@@ -671,6 +678,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__month);
       break;
+
     case 'M':
       __consume_duration_minus();
       if (__modifier == 'O')
@@ -680,12 +688,14 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail())
         __f.__set(__fields_set::__minutes);
       break;
+
     case 'p':
       __consume_duration_minus();
       chrono::__read_am_pm(__is, __f.__is_pm_);
       if (!__is.fail())
         __f.__set(__fields_set::__am_pm);
       break;
+
     case 'r': {
       __consume_duration_minus();
       tm __tm{};
@@ -693,20 +703,23 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
         __assign_time(__tm);
       break;
     }
+
     case 'R':
       chrono::__parse_from_stream(__is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%H:%M"), __f, __abbrev, __offset, __options);
       break;
+
     case 'T':
       chrono::__parse_from_stream(
           __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%H:%M:%S"), __f, __abbrev, __offset, __options);
       break;
+
     case 'S': {
-      // TODO: Parse the locale's alternative seconds representation for %OS.
       // Without an explicit width the field is two digits, plus the decimal
       // point and the fractional digits the target can represent.
       unsigned __fractional_width = __options.__fractional_width_;
       unsigned __default_width    = __fractional_width == 0 ? 2 : 3 + __fractional_width;
       __consume_duration_minus();
+      // TODO: Parse the locale's alternative seconds representation for %OS.
       chrono::__read_seconds(__is, __has_width ? __width : __default_width, __fractional_width, __f);
       if (!__is.fail())
         __f.__set(__fields_set::__seconds);
