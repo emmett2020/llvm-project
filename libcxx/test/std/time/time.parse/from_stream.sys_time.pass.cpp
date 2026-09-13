@@ -263,17 +263,16 @@ static void test() {
     assert(stream.fail());
     assert(value == July);
   }
-  {
-    // A signed field is bounded by int and still consumes all requested digits
-    // when it overflows.
-    std::basic_istringstream<CharT> stream{ST("+2147483648X")};
+  // Stop after the first overflowing digit, leaving the remaining digits unread.
+  for (const auto& input : {ST("+214748364812X"), ST("-214748364912X")}) {
+    std::basic_istringstream<CharT> stream{input};
     year value{2026};
-    from_stream(stream, ST("%11Y").c_str(), value);
+    from_stream(stream, ST("%13Y").c_str(), value);
     assert(stream.fail());
     assert(value == year{2026});
 
     stream.clear();
-    assert(stream.peek() == CharT('X'));
+    assert(stream.peek() == CharT('1'));
   }
   {
     // Combining an individually valid int century with %y is checked too.
@@ -285,7 +284,7 @@ static void test() {
   }
 
   // The seconds field uses an int intermediate. Its maximum is accepted for
-  // a duration, while the next value is rejected and fully consumed.
+  // a duration, while an overflowing value leaves its trailing digits unread.
   {
     std::basic_istringstream<CharT> stream{ST("2147483647")};
     duration<long long> value{};
@@ -294,14 +293,14 @@ static void test() {
     assert(value == duration<long long>{2147483647});
   }
   {
-    std::basic_istringstream<CharT> stream{ST("2147483648X")};
+    std::basic_istringstream<CharT> stream{ST("214748364812X")};
     duration<long long> value{42};
-    from_stream(stream, ST("%10S").c_str(), value);
+    from_stream(stream, ST("%12S").c_str(), value);
     assert(stream.fail());
     assert(value == duration<long long>{42});
 
     stream.clear();
-    assert(stream.peek() == CharT('X'));
+    assert(stream.peek() == CharT('1'));
   }
 
   // An oversized width is itself a parse failure and must not overflow int.

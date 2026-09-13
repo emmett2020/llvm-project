@@ -99,29 +99,26 @@ struct __read_digits_result {
 };
 
 // Extracts digits and reports their value, count, and overflow status.
-// After overflow, digits are still consumed up to '__max_digits'.
+// Stops after consuming the first digit that would overflow '__max_value'.
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI __read_digits_result
 __read_digits(basic_istream<_CharT, _Traits>& __is, unsigned __max_digits, uint64_t __max_value) {
   uint64_t __result      = 0;
   unsigned __digits_read = 0;
-  bool __overflow        = false;
 
-  for (_CharT __c{}; __digits_read < __max_digits && chrono::__peek(__is, __c); ++__digits_read) {
+  for (_CharT __c{}; __digits_read < __max_digits && chrono::__peek(__is, __c);) {
     if (__c < _CharT('0') || __c > _CharT('9'))
       break;
     __is.get();
+    ++__digits_read;
 
     const uint64_t __digit = static_cast<uint64_t>(__c - _CharT('0'));
-    if (!__overflow) {
-      if (__result > __max_value / 10 || (__result == __max_value / 10 && __digit > __max_value % 10))
-        __overflow = true;
-      else
-        __result = __result * 10 + __digit;
-    }
+    if (__result > __max_value / 10 || (__result == __max_value / 10 && __digit > __max_value % 10))
+      return {__result, __digits_read, true};
+    __result = __result * 10 + __digit;
   }
 
-  return {__result, __digits_read, __overflow};
+  return {__result, __digits_read, false};
 }
 
 // Reads an integer without a sign into int. Returns the number of digits read.
