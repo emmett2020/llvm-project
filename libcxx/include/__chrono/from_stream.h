@@ -1157,8 +1157,18 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
       return false;
     __out = duration<_Rep, _Period>{static_cast<_Rep>(__ticks)};
   } else {
-    // TODO: Support user-defined arithmetic types as duration representations.
-    return false;
+    using _Duration  = duration<_Rep, _Period>;
+    using _HMS       = hh_mm_ss<_Duration>;
+    using _Precision = typename _HMS::precision;
+
+    // Combine in the parsed precision before converting to the target period.
+    // Use the representation's arithmetic rather than built-in overflow operations.
+    _Precision __value       = chrono::duration_cast<_Precision>(seconds{static_cast<seconds::rep>(__seconds)});
+    const int64_t __fraction = __f.__subseconds_ / chrono::__pow10(18 - _HMS::fractional_width);
+    __value += _Precision{static_cast<typename _Precision::rep>(__fraction)};
+    if (__f.__negative_)
+      __value = -__value;
+    __out = chrono::duration_cast<_Duration>(__value);
   }
   return true;
 }
