@@ -158,18 +158,18 @@ static void test() {
   assert((parse<CharT, Seconds>(ST("2026-W30-1"), ST("%G-W%V-%u")) == date));
   assert((parse<CharT, Seconds>(ST("26-W30-1"), ST("%g-W%V-%u")) == date));
 
-  // A leading minus sign applies to all duration fields, including fractions.
+  // Combine duration fields, including fractions and day counts.
   struct DurationCase {
     std::basic_string<CharT> input;
     std::basic_string<CharT> format;
     milliseconds expected;
   };
   const DurationCase duration_cases[] = {
-      {ST("-01:30"), ST("%H:%M"), -90min},
-      {ST("-30:15"), ST("%M:%S"), -(30min + 15s)},
-      {ST("-1.25"), ST("%S"), -1250ms},
-      {ST("-2 01:30"), ST("%j %H:%M"), -(48h + 1h + 30min)},
-      {ST("-01:30"), ST("%R"), -90min},
+      {ST("01:30"), ST("%H:%M"), 90min},
+      {ST("30:15"), ST("%M:%S"), 30min + 15s},
+      {ST("1.25"), ST("%S"), 1250ms},
+      {ST("2 01:30"), ST("%j %H:%M"), 48h + 1h + 30min},
+      {ST("01:30"), ST("%R"), 90min},
   };
   for (const auto& c : duration_cases) {
     std::basic_istringstream<CharT> stream(c.input);

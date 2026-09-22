@@ -96,9 +96,6 @@ struct __fields_storage {
   // Minutes east of UTC.
   int __utc_offset_ = 0;
 
-  // A duration's sign applies to the complete value.
-  bool __negative_ = false;
-
   __fields_set __present_ = __fields_set::__none;
 
   _LIBCPP_HIDE_FROM_ABI constexpr void __set(__fields_set __part) { __present_ |= __part; }

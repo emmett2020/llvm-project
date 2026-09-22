@@ -95,12 +95,12 @@ void test() {
   check_failure(ST("01 1"), ST("%H %w"), 42s);
   check_failure(ST("2026-07-20 01"), ST("%F %H"), 42s);
 
-  // Only time-of-day/day-count fields consume a duration's leading minus sign.
+  // Parse time-of-day and day-count fields into a duration.
   for (const auto& format : {ST("%T"), ST("%X"), ST("%EX")})
-    check(ST("-01:30:00"), format, -90min);
-  check(ST("-01:30:00 AM"), ST("%r"), -90min);
-  check(ST("-PM 01:30"), ST("%p %I:%M"), -810min);
-  check(ST("-2 01:30"), ST("%j %R"), -(48h + 90min));
+    check(ST("01:30:00"), format, 90min);
+  check(ST("01:30:00 AM"), ST("%r"), 90min);
+  check(ST("PM 01:30"), ST("%p %I:%M"), 810min);
+  check(ST("2 01:30"), ST("%j %R"), 48h + 90min);
   check_failure(ST("01:-30"), ST("%H:%M"), 42min);
 
   // A sign consumes one character of a signed field's width.
@@ -134,24 +134,19 @@ void test() {
   check_failure(ST("-1976 -19"), ST("%5Y %3C"), year{42});
   check(ST("-0123-07-20"), ST("%5F"), year_month_day{year{-123}, July, day{20}});
 
-  // Check both scaling and accumulation, as well as the asymmetric signed limits.
+  // Check both scaling and accumulation, as well as the representation's upper limit.
   check_failure(ST("2147483647"), ST("%10H"), nanoseconds{42});
   check_failure(ST("2147483647"), ST("%10j"), nanoseconds{42});
   check(ST("2562047:47:16.854775807"), ST("%7H:%M:%S"), nanoseconds::max());
-  check(ST("-2562047:47:16.854775808"), ST("%7H:%M:%S"), nanoseconds::min());
   check_failure(ST("2562047:47:16.854775808"), ST("%7H:%M:%S"), nanoseconds{42});
-  check_failure(ST("-2562047:47:16.854775809"), ST("%7H:%M:%S"), nanoseconds{42});
   using UnsignedNanos = duration<std::uint64_t, std::nano>;
   check(ST("213503 23:34:33.709551615"), ST("%6j %T"), UnsignedNanos::max());
   check_failure(ST("213503 23:34:33.709551616"), ST("%6j %T"), UnsignedNanos{42});
   using Tiny = duration<signed char>;
   check(ST("127"), ST("%3S"), Tiny::max());
-  check(ST("-128"), ST("%3S"), Tiny::min());
   check_failure(ST("128"), ST("%3S"), Tiny{42});
-  check_failure(ST("-129"), ST("%3S"), Tiny{42});
-  check_failure(ST("-1"), ST("%S"), duration<unsigned>{42});
-  check(ST("-0"), ST("%S"), duration<unsigned>{0});
-  check(ST("-1.25"), ST("%S"), duration<double, std::milli>{-1250});
+  check(ST("0"), ST("%S"), duration<unsigned>{0});
+  check(ST("1.25"), ST("%S"), duration<double, std::milli>{1250});
   check(ST("2.50"), ST("%S"), duration<int, std::ratio<3, 2>>{1});
   check(ST("1 12"), ST("%j %H"), duration<int, std::ratio<129600>>{1});
   // This intermediate product needs more than 64 bits, but the result fits.

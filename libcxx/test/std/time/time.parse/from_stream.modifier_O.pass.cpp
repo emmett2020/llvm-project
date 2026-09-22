@@ -184,14 +184,14 @@ void test() {
     assert(result == date + (pm ? 12h : 0h));
   }
 
-  // A duration's leading sign still applies when its first field uses a facet.
+  // A duration's first field can use a facet.
   {
-    std::basic_istringstream<CharT> stream(ST("-@@@:45"));
+    std::basic_istringstream<CharT> stream(ST("@@@:45"));
     stream.imbue(std::locale(std::locale::classic(), new alternative_time_get<CharT>('H', 13, false)));
     minutes result{};
     from_stream(stream, ST("%OH:%M").c_str(), result);
     assert(!stream.fail());
-    assert(result == -(13h + 45min));
+    assert(result == 13h + 45min);
   }
 
   // %OS, %OU and %OW currently use their unmodified numeric parsers, and %Oz

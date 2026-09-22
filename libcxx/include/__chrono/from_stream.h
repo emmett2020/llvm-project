@@ -410,18 +410,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       __is.setstate(ios_base::failbit);
   };
 
-  // Read a leading minus sign only for a duration, before any fields are parsed.
-  // The sign applies to the entire duration, not to an individual field.
-  auto __consume_duration_minus = [&] {
-    if (!__options.__is_duration_ || __f.__present_ != __fields_set::__none)
-      return;
-
-    if (_CharT __c{}; chrono::__peek(__is, __c) && _Traits::eq(__c, _CharT('-'))) {
-      __is.get();
-      __f.__negative_ = true;
-    }
-  };
-
   unsigned __width = 0;
   bool __has_width = false;
 
@@ -642,7 +630,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
 
     case 'H':
-      __consume_duration_minus();
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__hours_);
       else
@@ -652,7 +639,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
 
     case 'I':
-      __consume_duration_minus();
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__hour12_);
       else
@@ -666,7 +652,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     case 'j':
       // The day of the year for a calendar type; a plain number of days when
       // the target is a duration, in which case it is not limited to [1, 366].
-      __consume_duration_minus();
       chrono::__read_unsigned(__is, __has_width ? __width : 3, __f.__day_of_year_);
       if (!__is.fail())
         __f.__set(__fields_set::__day_of_year);
@@ -682,7 +667,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
 
     case 'M':
-      __consume_duration_minus();
       if (__modifier == 'O')
         __read_alternative_field(__spec, __f.__minutes_);
       else
@@ -692,14 +676,12 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
 
     case 'p':
-      __consume_duration_minus();
       chrono::__read_am_pm(__is, __f.__is_pm_);
       if (!__is.fail())
         __f.__set(__fields_set::__am_pm);
       break;
 
     case 'r': {
-      __consume_duration_minus();
       tm __tm{};
       if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier))
         __assign_time(__tm);
@@ -720,7 +702,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       // point and the fractional digits the target can represent.
       unsigned __fractional_width = __options.__fractional_width_;
       unsigned __default_width    = __fractional_width == 0 ? 2 : 3 + __fractional_width;
-      __consume_duration_minus();
       // TODO: Parse the locale's alternative seconds representation for %OS.
       chrono::__read_seconds(__is, __has_width ? __width : __default_width, __fractional_width, __f);
       if (!__is.fail())
@@ -782,7 +763,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     }
 
     case 'X': {
-      __consume_duration_minus();
       tm __tm{};
       if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier))
         __assign_time(__tm);
@@ -1132,27 +1112,14 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
     if (__builtin_add_overflow(__ticks, __extra, std::addressof(__ticks)))
       return false;
 
-    _UInt __limit = static_cast<_UInt>((numeric_limits<_Rep>::max)());
-    if (__f.__negative_) {
-      if constexpr (numeric_limits<_Rep>::is_signed)
-        ++__limit;
-      else if (__ticks != 0)
-        return false;
-    }
-    if (__ticks > __limit)
+    if (__ticks > static_cast<_UInt>((numeric_limits<_Rep>::max)()))
       return false;
 
-    // The negative limit has one more unit of magnitude than the positive limit.
-    if (__f.__negative_ && __ticks != 0)
-      __out = duration<_Rep, _Period>{static_cast<_Rep>(-static_cast<_Rep>(__ticks - 1) - 1)};
-    else
-      __out = duration<_Rep, _Period>{static_cast<_Rep>(__ticks)};
+    __out = duration<_Rep, _Period>{static_cast<_Rep>(__ticks)};
   } else if constexpr (is_floating_point_v<_Rep>) {
     long double __ticks =
         (static_cast<long double>(__seconds) + static_cast<long double>(__f.__subseconds_) / 1000000000000000000.0L) *
         _Period::den / _Period::num;
-    if (__f.__negative_)
-      __ticks = -__ticks;
     if (__ticks < numeric_limits<_Rep>::lowest() || __ticks > (numeric_limits<_Rep>::max)())
       return false;
     __out = duration<_Rep, _Period>{static_cast<_Rep>(__ticks)};
@@ -1166,8 +1133,6 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
     _Precision __value       = chrono::duration_cast<_Precision>(seconds{static_cast<seconds::rep>(__seconds)});
     const int64_t __fraction = __f.__subseconds_ / chrono::__pow10(18 - _HMS::fractional_width);
     __value += _Precision{static_cast<typename _Precision::rep>(__fraction)};
-    if (__f.__negative_)
-      __value = -__value;
     __out = chrono::duration_cast<_Duration>(__value);
   }
   return true;
