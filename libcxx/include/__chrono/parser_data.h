@@ -105,6 +105,10 @@ struct __fields_storage {
   _LIBCPP_HIDE_FROM_ABI constexpr bool __has_any(__fields_set __part) const {
     return (__present_ & __part) != __fields_set::__none;
   }
+
+  _LIBCPP_HIDE_FROM_ABI constexpr bool __has_only(__fields_set __allowed) const {
+    return (__present_ & __allowed) == __present_;
+  }
 };
 
 } // namespace chrono

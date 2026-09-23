@@ -50,6 +50,8 @@ void test() {
   check(ST("2026-07-20 UTC +0130 ?"), ST("%F %Z %z !"), false, ST("original"), 42min);
   check(ST("2026-02-30 UTC +0130"), ST("%F %Z %z"), false, ST("original"), 42min);
   check(ST("2026-07-20 25 UTC +0130"), ST("%F %y %Z %z"), false, ST("original"), 42min);
+  check(ST("2026-07-20 29 UTC +0130"), ST("%F %V %Z %z"), false, ST("original"), 42min);
+  check(ST("2026-07-20 00 UTC +0130"), ST("%F %H %Z %z"), false, ST("original"), 42min);
   check(ST("UTC +0130"), ST("%Z %z"), false, ST("original"), 42min);
 
   // Successful parsing, including EOF immediately after %Z or %z.
