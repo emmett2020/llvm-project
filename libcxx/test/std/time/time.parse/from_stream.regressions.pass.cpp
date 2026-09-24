@@ -71,6 +71,23 @@ protected:
 };
 
 template <class CharT>
+void test_time_point_resolution() {
+  using namespace std::chrono;
+  const sys_seconds expected = sys_days{2026y / July / 20} + 13h + 45min + 30s;
+  auto test = [&](auto value) {
+    check(ST("20 26-07-20 01:45:30 PM"), ST("%C %y-%m-%d %I:%M:%S %p"), value);
+    check(ST("20 26 201 13 01:45:30 PM"), ST("%C %y %j %H %I:%M:%S %p"), value);
+    check_failure(ST("2026 25-07-20 13:45:30"), ST("%Y %y-%m-%d %T"), value);
+    check_failure(ST("2026-07-20 12 01:45:30 PM"), ST("%F %H %I:%M:%S %p"), value);
+    check_failure(ST("2026-07-20 13:45:30 AM"), ST("%F %T %p"), value);
+    check_failure(ST("2026-07-20 24:00:00"), ST("%F %T"), value);
+  };
+  test(expected);
+  test(local_seconds{expected.time_since_epoch()});
+  test(file_clock::from_sys(expected));
+}
+
+template <class CharT>
 void test() {
   using namespace std::chrono;
 
@@ -94,6 +111,10 @@ void test() {
   }
   check_failure(ST("01 1"), ST("%H %w"), 42s);
   check_failure(ST("2026-07-20 01"), ST("%F %H"), 42s);
+  check_failure(ST("20 01"), ST("%C %H"), 42s);
+  check_failure(ST("2026 01"), ST("%G %H"), 42s);
+  check_failure(ST("Mon 01"), ST("%a %H"), 42s);
+  check_failure(ST("Jul 01"), ST("%b %H"), 42s);
 
   // Parse time-of-day and day-count fields into a duration.
   for (const auto& format : {ST("%T"), ST("%X"), ST("%EX")})
@@ -101,7 +122,15 @@ void test() {
   check(ST("01:30:00 AM"), ST("%r"), 90min);
   check(ST("PM 01:30"), ST("%p %I:%M"), 810min);
   check(ST("2 01:30"), ST("%j %R"), 48h + 90min);
+  check(ST("13 01 PM"), ST("%H %I %p"), 13h);
+  check_failure(ST("12 01 PM"), ST("%H %I %p"), 42min);
+  check_failure(ST("13 AM"), ST("%H %p"), 42min);
+  check_failure(ST("PM"), ST("%p"), 42min);
+  check_failure(ST("00 PM"), ST("%I %p"), 42min);
+  check_failure(ST("13 PM"), ST("%I %p"), 42min);
   check_failure(ST("01:-30"), ST("%H:%M"), 42min);
+
+  test_time_point_resolution<CharT>();
 
   // A sign consumes one character of a signed field's width.
   for (const auto& format : {ST("%3Y"), ST("%3G")}) {
@@ -122,6 +151,7 @@ void test() {
     }
   }
   check(ST("+123"), ST("%4Y"), year{123});
+  check_failure(ST("100"), ST("%3y"), year{42});
   check(ST("-123"), ST("%4Y"), year{-123});
   check_failure(ST("+1"), ST("%1Y"), year{42});
   check_failure(ST("-1"), ST("%1Y"), year{42});

@@ -26,7 +26,7 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 
 namespace chrono {
 
-// Fields present in __fields_storage.
+// Fields available in __fields_storage, whether parsed or inferred.
 enum class __fields_set : uint32_t {
   __none    = 0,
   __year    = 1 << 0,
@@ -61,11 +61,15 @@ _LIBCPP_HIDE_FROM_ABI inline constexpr __fields_set operator&(__fields_set __lhs
   return static_cast<__fields_set>(static_cast<uint32_t>(__lhs) & static_cast<uint32_t>(__rhs));
 }
 
+_LIBCPP_HIDE_FROM_ABI inline constexpr __fields_set operator~(__fields_set __fields) {
+  return static_cast<__fields_set>(~static_cast<uint32_t>(__fields));
+}
+
 _LIBCPP_HIDE_FROM_ABI inline constexpr __fields_set& operator|=(__fields_set& __lhs, __fields_set __rhs) {
   return __lhs = __lhs | __rhs;
 }
 
-// Intermediate fields collected while parsing.
+// Intermediate fields collected while parsing and filled in after validation.
 struct __fields_storage {
   int __year_  = 0;
   int __month_ = 0;
@@ -97,6 +101,11 @@ struct __fields_storage {
   int __utc_offset_ = 0;
 
   __fields_set __present_ = __fields_set::__none;
+
+  // Exclude auxiliary outputs from field-set checks without changing their presence flags.
+  _LIBCPP_HIDE_FROM_ABI constexpr __fields_set __used_fields() const {
+    return __present_ & ~__fields_set::__utc_offset;
+  }
 
   _LIBCPP_HIDE_FROM_ABI constexpr void __set(__fields_set __part) { __present_ |= __part; }
 

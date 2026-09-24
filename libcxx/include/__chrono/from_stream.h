@@ -58,10 +58,8 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 
 namespace chrono {
 // __fractional_width_ is the number of fractional digits read by %S.
-// __is_duration_ distinguishes a duration from a time point when fields look the same, such as "1:30".
 struct __parse_options {
   unsigned __fractional_width_ = 0;
-  bool __is_duration_          = false;
 };
 
 template <class _Tp>
@@ -69,11 +67,11 @@ inline constexpr __parse_options __parse_options_v{};
 
 template <class _Rep, class _Period>
 inline constexpr __parse_options __parse_options_v<duration<_Rep, _Period> >{
-    hh_mm_ss<duration<_Rep, _Period> >::fractional_width, /*__is_duration_=*/true};
+    hh_mm_ss<duration<_Rep, _Period> >::fractional_width};
 
 template <class _Clock, class _Duration>
 inline constexpr __parse_options __parse_options_v<time_point<_Clock, _Duration> >{
-    __parse_options_v<_Duration>.__fractional_width_, /*__is_duration_=*/false};
+    __parse_options_v<_Duration>.__fractional_width_};
 
 _LIBCPP_HIDE_FROM_ABI constexpr int64_t __pow10(unsigned __exp) {
   int64_t __result = 1;
@@ -520,32 +518,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       return;
     }
 
-    // Durations can represent only elapsed days and time-of-day fields.
-    // Offset/zone outputs and literals do not contribute to the duration.
-    if (__options.__is_duration_) {
-      switch (__spec) {
-      case 'H':
-      case 'I':
-      case 'j':
-      case 'M':
-      case 'p':
-      case 'r':
-      case 'R':
-      case 'T':
-      case 'S':
-      case 'X':
-      case 'z':
-      case 'Z':
-      case 'n':
-      case 't':
-      case '%':
-        break;
-      default:
-        __is.setstate(ios_base::failbit);
-        return;
-      }
-    }
-
     switch (__spec) {
     case 'a':
     case 'A':
@@ -643,8 +615,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
         __read_alternative_field(__spec, __f.__hour12_);
       else
         chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__hour12_);
-      if (!__is.fail() && (__f.__hour12_ < 1 || __f.__hour12_ > 12))
-        __is.setstate(ios_base::failbit);
       if (!__is.fail())
         __f.__set(__fields_set::__hour12);
       break;
@@ -728,8 +698,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
         __read_alternative_field(__spec, __f.__weekday_);
       else
         chrono::__read_unsigned(__is, __has_width ? __width : 1, __f.__weekday_);
-      if (!__is.fail() && (__f.__weekday_ < 0 || __f.__weekday_ > 6))
-        __is.setstate(ios_base::failbit);
       if (!__is.fail())
         __f.__set(__fields_set::__weekday);
       break;
@@ -780,8 +748,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
         }
       } else
         chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__year_of_century_);
-      if (!__is.fail() && (__f.__year_of_century_ < 0 || __f.__year_of_century_ > 99))
-        __is.setstate(ios_base::failbit);
       if (!__is.fail())
         __f.__set(__fields_set::__year_of_century);
       break;
@@ -836,56 +802,92 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
   }
 }
 
-// Resolves %C/%y into a year, rejecting inconsistencies with %Y.
-_LIBCPP_HIDE_FROM_ABI inline bool __resolve_year(__fields_storage& __f) {
+_LIBCPP_HIDE_FROM_ABI constexpr bool __year_in_range(int64_t __value) {
+  return static_cast<int>(year::min()) <= __value && __value <= static_cast<int>(year::max());
+}
+
+// Obtains a valid year from %Y or %C/%y, checking conflicts before filling it in.
+_LIBCPP_HIDE_FROM_ABI inline bool __try_get_year(__fields_storage& __f) {
+  int64_t __year = __f.__year_;
   // %y is the year without its century. With %C the two are concatenated;
   // without it, [69, 99] refers to 1969-1999 and [00, 68] to 2000-2068.
   if (__f.__has(__fields_set::__year_of_century)) {
-    int __year{};
+    if (__f.__year_of_century_ < 0 || __f.__year_of_century_ > 99)
+      return false;
     if (__f.__has(__fields_set::__century)) {
       // %C uses floored division, while %y is the absolute last two digits.
-      int64_t __combined = static_cast<int64_t>(__f.__century_) * 100;
+      __year = static_cast<int64_t>(__f.__century_) * 100;
       if (__f.__century_ < 0 && __f.__year_of_century_ != 0)
-        __combined += 100 - __f.__year_of_century_;
+        __year += 100 - __f.__year_of_century_;
       else
-        __combined += __f.__year_of_century_;
-      if (__combined < (numeric_limits<int>::min)() || __combined > (numeric_limits<int>::max)())
-        return false;
-      __year = static_cast<int>(__combined);
-    } else
-      __year = __f.__year_of_century_ <= 68 ? 2000 + __f.__year_of_century_ : 1900 + __f.__year_of_century_;
-
+        __year += __f.__year_of_century_;
+    } else {
+      __year = (__f.__year_of_century_ <= 68 ? 2000 : 1900) + __f.__year_of_century_;
+    }
     if (__f.__has(__fields_set::__year) && __f.__year_ != __year)
       return false;
-
-    __f.__year_ = __year;
-    __f.__set(__fields_set::__year);
-  } else if (__f.__has(__fields_set::__century | __fields_set::__year)) {
-    const int __century = __f.__year_ / 100 - (__f.__year_ % 100 < 0);
-    if (__century != __f.__century_)
+  } else {
+    if (!__f.__has(__fields_set::__year))
+      return false;
+    if (__f.__has(__fields_set::__century) && __f.__century_ != __year / 100 - (__year % 100 < 0))
       return false;
   }
 
+  if (!chrono::__year_in_range(__year))
+    return false;
+  __f.__year_ = static_cast<int>(__year);
+  __f.__set(__fields_set::__year);
   return true;
 }
 
-// Resolves %I/%p into a 24-hour value, rejecting inconsistencies with %H.
-_LIBCPP_HIDE_FROM_ABI inline bool __resolve_hour(__fields_storage& __f) {
+// Checks both a computed calendar year and the original %Y/%C/%y constraints.
+_LIBCPP_HIDE_FROM_ABI inline bool __validate_year(const __fields_storage& __f, int64_t __year) {
+  if (!chrono::__year_in_range(__year))
+    return false;
+  if (__f.__has(__fields_set::__year) && __f.__year_ != __year)
+    return false;
+  if (__f.__has(__fields_set::__century) && __f.__century_ != __year / 100 - (__year % 100 < 0))
+    return false;
+  if (__f.__has(__fields_set::__year_of_century) && __f.__year_of_century_ != (__year < 0 ? -__year : __year) % 100)
+    return false;
+  return true;
+}
+
+_LIBCPP_HIDE_FROM_ABI inline bool __validate_month(const __fields_storage& __f, int __month) {
+  return 1 <= __month && __month <= 12 && (!__f.__has(__fields_set::__month) || __f.__month_ == __month);
+}
+
+_LIBCPP_HIDE_FROM_ABI inline bool __validate_day(const __fields_storage& __f, int __day) {
+  return 1 <= __day && __day <= 31 && (!__f.__has(__fields_set::__day) || __f.__day_ == __day);
+}
+
+_LIBCPP_HIDE_FROM_ABI inline bool __validate_weekday(const __fields_storage& __f, int __weekday) {
+  return 0 <= __weekday && __weekday <= 6 && (!__f.__has(__fields_set::__weekday) || __f.__weekday_ == __weekday);
+}
+
+// Computes a candidate hour without overwriting %H or adding a presence flag.
+_LIBCPP_HIDE_FROM_ABI inline int __compute_hour(const __fields_storage& __f) {
   // %I is the hour on the 12-hour clock, which %p disambiguates. Without %p the
   // hour is taken as it was written.
   if (__f.__has(__fields_set::__hour12)) {
-    int __hours = __f.__hour12_;
     if (__f.__has(__fields_set::__am_pm))
-      __hours = __f.__hour12_ % 12 + (__f.__is_pm_ ? 12 : 0);
+      return __f.__hour12_ % 12 + (__f.__is_pm_ ? 12 : 0);
+    return __f.__hour12_;
+  }
+  return __f.__hours_;
+}
 
-    if (__f.__has(__fields_set::__hours) && __f.__hours_ != __hours)
-      return false;
-
-    __f.__hours_ = __hours;
-    __f.__set(__fields_set::__hours);
-  } else if (__f.__has(__fields_set::__am_pm | __fields_set::__hours) && (__f.__hours_ >= 12) != __f.__is_pm_)
+// Durations allow hours beyond 23; clock times do not.
+_LIBCPP_HIDE_FROM_ABI inline bool __validate_hour(const __fields_storage& __f, int __hour, int __max_hour) {
+  if (__hour < 0 || __hour > __max_hour)
     return false;
-
+  if (__f.__has(__fields_set::__hours) && __f.__hours_ != __hour)
+    return false;
+  if (__f.__has(__fields_set::__hour12)) {
+    if (__f.__hour12_ < 1 || __f.__hour12_ > 12 || chrono::__compute_hour(__f) != __hour)
+      return false;
+  } else if (__f.__has(__fields_set::__am_pm | __fields_set::__hours) && (__hour >= 12) != __f.__is_pm_)
+    return false;
   return true;
 }
 
@@ -895,8 +897,12 @@ __in_range(const __fields_storage& __f, __fields_set __part, int __value, int __
   return !__f.__has(__part) || (__lo <= __value && __value <= __hi);
 }
 
-_LIBCPP_HIDE_FROM_ABI constexpr bool __year_in_range(int __value) {
-  return static_cast<int>(year::min()) <= __value && __value <= static_cast<int>(year::max());
+_LIBCPP_HIDE_FROM_ABI inline bool __validate_minute(const __fields_storage& __f, int __max_minute) {
+  return chrono::__in_range(__f, __fields_set::__minutes, __f.__minutes_, 0, __max_minute);
+}
+
+_LIBCPP_HIDE_FROM_ABI inline bool __validate_second(const __fields_storage& __f, int __max_second) {
+  return chrono::__in_range(__f, __fields_set::__seconds, __f.__seconds_, 0, __max_second) && __f.__subseconds_ >= 0;
 }
 
 // Converts an ISO week date to sys_days.
@@ -945,12 +951,9 @@ _LIBCPP_HIDE_FROM_ABI inline bool __validate_date_fields(const __fields_storage&
   const year_month_day __ymd{__date};
   const int __year = static_cast<int>(__ymd.year());
   const weekday __weekday{__date};
-  if (!__matches(__fields_set::__year, __f.__year_, __year) ||
-      !__matches(__fields_set::__month, __f.__month_, static_cast<unsigned>(__ymd.month())) ||
-      !__matches(__fields_set::__day, __f.__day_, static_cast<unsigned>(__ymd.day())) ||
-      !__matches(__fields_set::__century, __f.__century_, __year / 100 - (__year % 100 < 0)) ||
-      !__matches(__fields_set::__year_of_century, __f.__year_of_century_, (__year < 0 ? -__year : __year) % 100) ||
-      !__matches(__fields_set::__weekday, __f.__weekday_, __weekday.c_encoding()))
+  if (!chrono::__validate_year(__f, __year) || !chrono::__validate_month(__f, static_cast<unsigned>(__ymd.month())) ||
+      !chrono::__validate_day(__f, static_cast<unsigned>(__ymd.day())) ||
+      !chrono::__validate_weekday(__f, __weekday.c_encoding()))
     return false;
 
   const sys_days __jan1{__ymd.year() / January / 1};
@@ -988,80 +991,67 @@ _LIBCPP_HIDE_FROM_ABI inline bool __validate_date_fields(const __fields_storage&
   return true;
 }
 
-// Converts complete, consistent date fields to sys_days.
-_LIBCPP_HIDE_FROM_ABI inline bool __to_sys_days(const __fields_storage& __f, sys_days& __out) {
+// Obtains one date from a complete representation, validates all supplied date
+// fields against it, and fills in any missing calendar fields.
+_LIBCPP_HIDE_FROM_ABI inline bool __try_get_date(__fields_storage& __f, sys_days& __out) {
+  const bool __have_year = __f.__has_any(__fields_set::__year | __fields_set::__year_of_century);
+  if (__have_year && !chrono::__try_get_year(__f))
+    return false;
+
   sys_days __date{};
-  bool __have_date = false;
-
-  // Records a candidate date, or reports that it contradicts an earlier one.
-  auto __try_accept_date = [&](sys_days __candidate) {
-    if (__have_date && __candidate != __date)
-      return false;
-
-    __date      = __candidate;
-    __have_date = true;
-    return true;
-  };
-
-  if (__f.__has(__fields_set::__year | __fields_set::__month | __fields_set::__day)) {
-    if (!chrono::__year_in_range(__f.__year_) || __f.__month_ < 1 || __f.__month_ > 12 || __f.__day_ < 1 ||
-        __f.__day_ > 31)
+  if (__have_year && __f.__has(__fields_set::__month | __fields_set::__day)) {
+    if (__f.__month_ < 1 || __f.__month_ > 12 || __f.__day_ < 1 || __f.__day_ > 31)
       return false;
 
     year_month_day __ymd{
         year{__f.__year_}, month{static_cast<unsigned>(__f.__month_)}, day{static_cast<unsigned>(__f.__day_)}};
-    if (!__ymd.ok() || !__try_accept_date(static_cast<sys_days>(__ymd)))
+    if (!__ymd.ok())
       return false;
-  }
-
-  if (__f.__has(__fields_set::__iso_year | __fields_set::__iso_week | __fields_set::__weekday)) {
-    sys_days __iso_date{};
-    if (!chrono::__iso_week_to_sys_days(
-            __f.__iso_year_, __f.__iso_week_, weekday{static_cast<unsigned>(__f.__weekday_)}, __iso_date) ||
-        !__try_accept_date(__iso_date))
+    __date = static_cast<sys_days>(__ymd);
+  } else if (__f.__has(__fields_set::__iso_year | __fields_set::__iso_week | __fields_set::__weekday)) {
+    if (__f.__weekday_ < 0 || __f.__weekday_ > 6 ||
+        !chrono::__iso_week_to_sys_days(
+            __f.__iso_year_, __f.__iso_week_, weekday{static_cast<unsigned>(__f.__weekday_)}, __date))
       return false;
-  }
-
-  if (__f.__has(__fields_set::__year | __fields_set::__day_of_year)) {
-    if (!chrono::__year_in_range(__f.__year_) || __f.__day_of_year_ < 1 || __f.__day_of_year_ > 366)
+  } else if (__have_year && __f.__has(__fields_set::__day_of_year)) {
+    if (__f.__day_of_year_ < 1 || __f.__day_of_year_ > 366)
       return false;
 
-    sys_days __ordinal = sys_days{year{__f.__year_} / January / 1} + days{__f.__day_of_year_ - 1};
+    __date = sys_days{year{__f.__year_} / January / 1} + days{__f.__day_of_year_ - 1};
     // Catches day 366 of a common year.
-    if (year_month_day{__ordinal}.year() != year{__f.__year_} || !__try_accept_date(__ordinal))
+    if (year_month_day{__date}.year() != year{__f.__year_})
       return false;
-  }
-
-  if (__f.__has(__fields_set::__year | __fields_set::__week_sun | __fields_set::__weekday)) {
-    sys_days __week_date{};
+  } else if (__have_year && __f.__has(__fields_set::__weekday) &&
+             __f.__has_any(__fields_set::__week_sun | __fields_set::__week_mon)) {
+    if (__f.__weekday_ < 0 || __f.__weekday_ > 6)
+      return false;
+    const bool __use_sunday = __f.__has(__fields_set::__week_sun);
     if (!chrono::__week_to_sys_days(
-            __f.__year_, __f.__week_sun_, Sunday, weekday{static_cast<unsigned>(__f.__weekday_)}, __week_date) ||
-        !__try_accept_date(__week_date))
+            __f.__year_,
+            __use_sunday ? __f.__week_sun_ : __f.__week_mon_,
+            __use_sunday ? Sunday : Monday,
+            weekday{static_cast<unsigned>(__f.__weekday_)},
+            __date))
       return false;
-  }
-
-  if (__f.__has(__fields_set::__year | __fields_set::__week_mon | __fields_set::__weekday)) {
-    sys_days __week_date{};
-    if (!chrono::__week_to_sys_days(
-            __f.__year_, __f.__week_mon_, Monday, weekday{static_cast<unsigned>(__f.__weekday_)}, __week_date) ||
-        !__try_accept_date(__week_date))
-      return false;
-  }
-
-  if (!__have_date)
+  } else {
     return false;
+  }
 
   if (!chrono::__validate_date_fields(__f, __date))
     return false;
 
+  const year_month_day __ymd{__date};
+  __f.__year_  = static_cast<int>(__ymd.year());
+  __f.__month_ = static_cast<unsigned>(__ymd.month());
+  __f.__day_   = static_cast<unsigned>(__ymd.day());
+  __f.__set(__fields_set::__year | __fields_set::__month | __fields_set::__day);
   __out = __date;
   return true;
 }
 
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI _Duration __to_time_of_day(const __fields_storage& __f) {
-  auto __result =
-      chrono::duration_cast<_Duration>(hours{__f.__hours_} + minutes{__f.__minutes_} + seconds{__f.__seconds_});
+_LIBCPP_HIDE_FROM_ABI _Duration __to_time_of_day(const __fields_storage& __f, int __hour) {
+  auto __result = chrono::duration_cast<_Duration>(hours{__hour} + minutes{__f.__minutes_} + seconds{__f.__seconds_});
 
   // A target that cannot hold a fraction of a second never parses one, and
   // converting attoseconds to such a coarse period would overflow the ratio
@@ -1074,10 +1064,9 @@ _LIBCPP_HIDE_FROM_ABI _Duration __to_time_of_day(const __fields_storage& __f) {
 }
 
 // Validates a clock time, allowing seconds through '__max_seconds'.
-_LIBCPP_HIDE_FROM_ABI inline bool __time_of_day_ok(const __fields_storage& __f, int __max_seconds) {
-  return chrono::__in_range(__f, __fields_set::__hours, __f.__hours_, 0, 23) &&
-         chrono::__in_range(__f, __fields_set::__minutes, __f.__minutes_, 0, 59) &&
-         chrono::__in_range(__f, __fields_set::__seconds, __f.__seconds_, 0, __max_seconds);
+_LIBCPP_HIDE_FROM_ABI inline bool __time_of_day_ok(const __fields_storage& __f, int __hour, int __max_seconds) {
+  return chrono::__validate_hour(__f, __hour, 23) && chrono::__validate_minute(__f, 59) &&
+         chrono::__validate_second(__f, __max_seconds);
 }
 
 // Builders validate parsed fields and convert them to the requested type.
@@ -1138,14 +1127,25 @@ __scale_duration(_UInt __value, uint64_t __multiplier, uint64_t __divisor, _UInt
 
 template <class _Rep, class _Period>
 _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_Rep, _Period>& __out) {
-  // A duration is the sum of its components and is not a point in time: they
-  // are not range checked, and %j is a number of days rather than the day of a
-  // year. At least one of them is required.
-  if (!__f.__has_any(
-          __fields_set::__day_of_year | __fields_set::__hours | __fields_set::__minutes | __fields_set::__seconds))
+  // Durations can represent only elapsed days and time-of-day fields.
+  // UTC offsets and time zone abbreviations are auxiliary outputs.
+  constexpr auto __allowed =
+      __fields_set::__day_of_year | __fields_set::__hours | __fields_set::__hour12 | __fields_set::__am_pm |
+      __fields_set::__minutes | __fields_set::__seconds | __fields_set::__utc_offset;
+  if (!__f.__has_only(__allowed))
     return false;
 
-  if (__f.__day_of_year_ < 0 || __f.__hours_ < 0 || __f.__minutes_ < 0 || __f.__seconds_ < 0 || __f.__subseconds_ < 0)
+  // A duration is the sum of its components, which are not restricted to
+  // clock-time ranges. %j is a number of days rather than the day of a year.
+  // At least one component is required.
+  if (!__f.__has_any(__fields_set::__day_of_year | __fields_set::__hours | __fields_set::__hour12 |
+                     __fields_set::__minutes | __fields_set::__seconds))
+    return false;
+
+  const int __hour              = chrono::__compute_hour(__f);
+  constexpr int __max_component = (numeric_limits<int>::max)();
+  if (__f.__day_of_year_ < 0 || !chrono::__validate_hour(__f, __hour, __max_component) ||
+      !chrono::__validate_minute(__f, __max_component) || !chrono::__validate_second(__f, __max_component))
     return false;
 
   constexpr uint64_t __seconds_per_minute = 60;
@@ -1155,7 +1155,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
   // Every whole-number field fits in int, so their sum in seconds fits in uint64_t.
   const uint64_t __seconds =
       static_cast<uint64_t>(__f.__day_of_year_) * __seconds_per_day +
-      static_cast<uint64_t>(__f.__hours_) * __seconds_per_hour +
+      static_cast<uint64_t>(__hour) * __seconds_per_hour +
       static_cast<uint64_t>(__f.__minutes_) * __seconds_per_minute + __f.__seconds_;
   if constexpr (is_integral_v<_Rep>) {
     using _UInt = make_unsigned_t<common_type_t<_Rep, uint64_t>>;
@@ -1205,40 +1205,44 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
 }
 
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, sys_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, sys_time<_Duration>& __out) {
   sys_days __date{};
-  if (!chrono::__to_sys_days(__f, __date))
+  if (!chrono::__try_get_date(__f, __date))
     return false;
 
   // Seconds are capped at 59 because sys_time (system_clock) is leap-second
   // oblivious; the utc_time builder allows 60.
-  if (!chrono::__time_of_day_ok(__f, 59))
+  const int __hour = chrono::__compute_hour(__f);
+  if (!chrono::__time_of_day_ok(__f, __hour, 59))
     return false;
 
   // %z gives the offset of the parsed time from UTC, so it is subtracted to
   // arrive at the UTC time sys_time holds. It is zero when %z was not used.
   // A target coarser than the parsed value (a sys_days parsed with "%F %T") is
   // rounded down, so that the day is the day that was written.
-  __out = chrono::floor<_Duration>(__date + chrono::__to_time_of_day<_Duration>(__f) - minutes{__f.__utc_offset_});
+  __out =
+      chrono::floor<_Duration>(__date + chrono::__to_time_of_day<_Duration>(__f, __hour) - minutes{__f.__utc_offset_});
   return true;
 }
 
 // A parsed UTC offset is not applied to local_time.
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, local_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, local_time<_Duration>& __out) {
   sys_days __date{};
-  if (!chrono::__to_sys_days(__f, __date))
+  if (!chrono::__try_get_date(__f, __date))
     return false;
 
-  if (!chrono::__time_of_day_ok(__f, 59))
+  const int __hour = chrono::__compute_hour(__f);
+  if (!chrono::__time_of_day_ok(__f, __hour, 59))
     return false;
 
-  __out = chrono::floor<_Duration>(local_days{__date.time_since_epoch()} + chrono::__to_time_of_day<_Duration>(__f));
+  __out = chrono::floor<_Duration>(
+      local_days{__date.time_since_epoch()} + chrono::__to_time_of_day<_Duration>(__f, __hour));
   return true;
 }
 
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, file_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, file_time<_Duration>& __out) {
   sys_time<_Duration> __st{};
   if (!chrono::__from_fields(__f, __st))
     return false;
@@ -1250,48 +1254,51 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, file_time<
 #    if _LIBCPP_HAS_EXPERIMENTAL_TZDB
 // utc_time permits a leap second.
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, utc_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, utc_time<_Duration>& __out) {
   sys_days __date{};
-  if (!chrono::__to_sys_days(__f, __date))
+  if (!chrono::__try_get_date(__f, __date))
     return false;
 
-  if (!chrono::__time_of_day_ok(__f, 60))
+  const int __hour = chrono::__compute_hour(__f);
+  if (!chrono::__time_of_day_ok(__f, __hour, 60))
     return false;
 
   // Converting the date before adding the time of day keeps a 60th second
   // inside the leap second instead of overflowing the day.
   __out = chrono::floor<_Duration>(
-      utc_clock::from_sys(__date) + chrono::__to_time_of_day<_Duration>(__f) - minutes{__f.__utc_offset_});
+      utc_clock::from_sys(__date) + chrono::__to_time_of_day<_Duration>(__f, __hour) - minutes{__f.__utc_offset_});
   return true;
 }
 
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, tai_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, tai_time<_Duration>& __out) {
   sys_days __date{};
-  if (!chrono::__to_sys_days(__f, __date))
+  if (!chrono::__try_get_date(__f, __date))
     return false;
 
-  if (!chrono::__time_of_day_ok(__f, 59))
+  const int __hour = chrono::__compute_hour(__f);
+  if (!chrono::__time_of_day_ok(__f, __hour, 59))
     return false;
 
   constexpr sys_days __tai_epoch{-days{4383}}; // 1958-01-01.
-  __out = chrono::floor<_Duration>(
-      tai_time<days>{__date - __tai_epoch} + chrono::__to_time_of_day<_Duration>(__f) - minutes{__f.__utc_offset_});
+  __out = chrono::floor<_Duration>(tai_time<days>{__date - __tai_epoch} +
+                                   chrono::__to_time_of_day<_Duration>(__f, __hour) - minutes{__f.__utc_offset_});
   return true;
 }
 
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, gps_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, gps_time<_Duration>& __out) {
   sys_days __date{};
-  if (!chrono::__to_sys_days(__f, __date))
+  if (!chrono::__try_get_date(__f, __date))
     return false;
 
-  if (!chrono::__time_of_day_ok(__f, 59))
+  const int __hour = chrono::__compute_hour(__f);
+  if (!chrono::__time_of_day_ok(__f, __hour, 59))
     return false;
 
   constexpr sys_days __gps_epoch{days{3657}}; // 1980-01-06.
-  __out = chrono::floor<_Duration>(
-      gps_time<days>{__date - __gps_epoch} + chrono::__to_time_of_day<_Duration>(__f) - minutes{__f.__utc_offset_});
+  __out = chrono::floor<_Duration>(gps_time<days>{__date - __gps_epoch} +
+                                   chrono::__to_time_of_day<_Duration>(__f, __hour) - minutes{__f.__utc_offset_});
   return true;
 }
 #    endif // _LIBCPP_HAS_EXPERIMENTAL_TZDB
@@ -1299,73 +1306,56 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, gps_time<_
 // Calendrical results reject fields they cannot represent. UTC offsets remain
 // allowed as an auxiliary output; time zone abbreviations are stored separately.
 _LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, day& __out) {
-  if (!__f.__has_only(__fields_set::__day | __fields_set::__utc_offset))
+  if (__f.__used_fields() != __fields_set::__day)
     return false;
 
-  if (!__f.__has(__fields_set::__day) || __f.__day_ < 1 || __f.__day_ > 31)
+  if (__f.__day_ < 1 || __f.__day_ > 31)
     return false;
 
-  day __d{static_cast<unsigned>(__f.__day_)};
-  if (!__d.ok())
-    return false;
-
-  __out = __d;
+  __out = day{static_cast<unsigned>(__f.__day_)};
   return true;
 }
 
 _LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, month& __out) {
-  if (!__f.__has_only(__fields_set::__month | __fields_set::__utc_offset))
+  if (__f.__used_fields() != __fields_set::__month)
     return false;
 
-  if (!__f.__has(__fields_set::__month) || __f.__month_ < 1 || __f.__month_ > 12)
+  if (__f.__month_ < 1 || __f.__month_ > 12)
     return false;
 
-  month __m{static_cast<unsigned>(__f.__month_)};
-  if (!__m.ok())
-    return false;
-
-  __out = __m;
+  __out = month{static_cast<unsigned>(__f.__month_)};
   return true;
 }
 
-_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, year& __out) {
+_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(__fields_storage& __f, year& __out) {
   constexpr auto __allowed =
       __fields_set::__year | __fields_set::__century | __fields_set::__year_of_century | __fields_set::__utc_offset;
   if (!__f.__has_only(__allowed))
     return false;
 
-  if (!__f.__has(__fields_set::__year) || !chrono::__year_in_range(__f.__year_))
+  if (!chrono::__try_get_year(__f))
     return false;
 
-  year __y{__f.__year_}; // year's constructor takes int; no cast needed.
-  if (!__y.ok())
-    return false;
-
-  __out = __y;
+  __out = year{__f.__year_};
   return true;
 }
 
 _LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, weekday& __out) {
-  if (!__f.__has_only(__fields_set::__weekday | __fields_set::__utc_offset))
+  if (__f.__used_fields() != __fields_set::__weekday)
     return false;
 
-  if (!__f.__has(__fields_set::__weekday) || __f.__weekday_ < 0 || __f.__weekday_ > 6)
+  if (__f.__weekday_ < 0 || __f.__weekday_ > 6)
     return false;
 
-  weekday __wd{static_cast<unsigned>(__f.__weekday_)}; // stored as [0, 6], Sunday == 0.
-  if (!__wd.ok())
-    return false;
-
-  __out = __wd;
+  __out = weekday{static_cast<unsigned>(__f.__weekday_)};
   return true;
 }
 
 _LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, month_day& __out) {
-  if (!__f.__has_only(__fields_set::__month | __fields_set::__day | __fields_set::__utc_offset))
+  if (__f.__used_fields() != (__fields_set::__month | __fields_set::__day))
     return false;
 
-  if (!__f.__has(__fields_set::__month | __fields_set::__day) || __f.__month_ < 1 || __f.__month_ > 12 ||
-      __f.__day_ < 1 || __f.__day_ > 31)
+  if (__f.__month_ < 1 || __f.__month_ > 12 || __f.__day_ < 1 || __f.__day_ > 31)
     return false;
 
   month_day __md{month{static_cast<unsigned>(__f.__month_)}, day{static_cast<unsigned>(__f.__day_)}};
@@ -1376,26 +1366,24 @@ _LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, mon
   return true;
 }
 
-_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, year_month& __out) {
+_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(__fields_storage& __f, year_month& __out) {
   constexpr auto __allowed =
       __fields_set::__year | __fields_set::__century | __fields_set::__year_of_century | __fields_set::__month |
       __fields_set::__utc_offset;
   if (!__f.__has_only(__allowed))
     return false;
 
-  if (!__f.__has(__fields_set::__year | __fields_set::__month) || !chrono::__year_in_range(__f.__year_) ||
-      __f.__month_ < 1 || __f.__month_ > 12)
+  if (!__f.__has(__fields_set::__month))
     return false;
 
-  year_month __ym{year{__f.__year_}, month{static_cast<unsigned>(__f.__month_)}};
-  if (!__ym.ok())
+  if (!chrono::__try_get_year(__f) || !chrono::__validate_month(__f, __f.__month_))
     return false;
 
-  __out = __ym;
+  __out = year_month{year{__f.__year_}, month{static_cast<unsigned>(__f.__month_)}};
   return true;
 }
 
-_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, year_month_day& __out) {
+_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(__fields_storage& __f, year_month_day& __out) {
   constexpr auto __allowed =
       __fields_set::__year | __fields_set::__century | __fields_set::__year_of_century | __fields_set::__month |
       __fields_set::__day | __fields_set::__iso_year | __fields_set::__iso_week | __fields_set::__weekday |
@@ -1405,7 +1393,7 @@ _LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, yea
 
   // Resolve the date and check that all supplied date fields agree.
   sys_days __date{};
-  if (!chrono::__to_sys_days(__f, __date))
+  if (!chrono::__try_get_date(__f, __date))
     return false;
 
   __out = year_month_day{__date};
@@ -1433,13 +1421,7 @@ __from_stream(basic_istream<_CharT, _Traits>& __is,
     if (__is.fail())
       return __is;
 
-    // Once all fields have been parsed, resolve related fields and perform checks shared across result types.
-    if (!chrono::__resolve_year(__f) || !chrono::__resolve_hour(__f)) {
-      __is.setstate(ios_base::failbit);
-      return __is;
-    }
-
-    // Construct the requested result from the parsed fields.
+    // Resolve and validate the fields needed to construct the requested result.
     _Tp __out{};
     if (!chrono::__from_fields(__f, __out)) {
       __is.setstate(ios_base::failbit);

@@ -63,6 +63,24 @@ void test() {
   check(ST("2026-07-20"), ST("%F"), true, ST("original"), 42min);
   check(ST("2026-07-20 UTC"), ST("%F %Z"), true, ST("UTC"), 42min);
   check(ST("2026-07-20 +0130"), ST("%F %z"), true, ST("original"), 90min);
+
+  // Auxiliary fields do not count as extra fields when constructing a day.
+  auto check_day = [](const std::basic_string<CharT>& input, const std::basic_string<CharT>& format, bool success) {
+    std::basic_istringstream<CharT> stream(input);
+    stream.imbue(std::locale::classic());
+    day result{1};
+    auto abbrev = ST("original");
+    minutes offset{42};
+    from_stream(stream, format.c_str(), result, &abbrev, &offset);
+    assert(stream.fail() == !success);
+    assert(result == (success ? day{15} : day{1}));
+    assert(abbrev == (success ? ST("UTC") : ST("original")));
+    assert(offset == (success ? 480min : 42min));
+  };
+  check_day(ST("15 UTC +0800"), ST("%d %Z %z"), true);
+  check_day(ST("UTC +0800"), ST("%Z %z"), false);
+  check_day(ST("02-15 UTC +0800"), ST("%m-%d %Z %z"), false);
+  check_day(ST("32 UTC +0800"), ST("%d %Z %z"), false);
 }
 
 int main(int, char**) {

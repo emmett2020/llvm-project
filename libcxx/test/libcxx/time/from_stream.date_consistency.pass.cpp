@@ -94,6 +94,12 @@ void test() {
   check(ST("2021-01-01 Fri"), ST("%F %a"), jan1);
   check(ST("2021-01-01 Thu"), ST("%F %a"), jan1, false);
 
+  // A complete calendar date must not hide conflicting or invalid alternatives.
+  check(ST("2021-01-01 2020-W53-5 001"), ST("%F %G-W%V-%u %j"), jan1);
+  check(ST("2021-01-01 2020-W52-5"), ST("%F %G-W%V-%u"), jan1, false);
+  check(ST("2021-01-01 2021-W53-5"), ST("%F %G-W%V-%u"), jan1, false);
+  check(ST("2021-01-01 366"), ST("%F %j"), jan1, false);
+
   // Leap days and a negative calendar year's century.
   check(ST("2024 060 02 29"), ST("%Y %j %m %d"), 2024y / February / 29);
   check(ST("2024 060 03"), ST("%Y %j %m"), 2024y / February / 29, false);
@@ -125,6 +131,11 @@ int main(int, char**) {
     for (int offset = -7; offset != 7; ++offset) {
       const sys_days date = jan1 + days{offset};
       check<char>(std::format("{:%F %j %U %W %G %V %u}", date), "%F %j %U %W %G %V %u", year_month_day{date});
+      // Exercise each remaining candidate path with redundant constraints.
+      check<char>(std::format("{:%G %V %u %Y %j %U %W}", date), "%G %V %u %Y %j %U %W", year_month_day{date});
+      check<char>(std::format("{:%Y %j %U %W %u}", date), "%Y %j %U %W %u", year_month_day{date});
+      check<char>(std::format("{:%Y %U %W %u}", date), "%Y %U %W %u", year_month_day{date});
+      check<char>(std::format("{:%Y %W %u}", date), "%Y %W %u", year_month_day{date});
     }
   }
   return 0;
