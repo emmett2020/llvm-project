@@ -19,6 +19,32 @@ using namespace std::chrono;
 using Fields = std::chrono::__fields_storage;
 using Parts  = std::chrono::__fields_set;
 
+constexpr bool test_in_range() {
+  assert(std::chrono::__in_range(1, 1, 12));
+  assert(std::chrono::__in_range(12, 1, 12));
+  assert(!std::chrono::__in_range(0, 1, 12));
+  assert(!std::chrono::__in_range(13, 1, 12));
+  assert(std::chrono::__in_range(-1, -2, 0));
+  assert(std::chrono::__in_range(0, 0, 0));
+
+  const int64_t min = std::numeric_limits<int64_t>::min();
+  const int64_t max = std::numeric_limits<int64_t>::max();
+  assert(std::chrono::__in_range(min, min, max));
+  assert(std::chrono::__in_range(max, min, max));
+  assert(!std::chrono::__in_range(min, -32767, 32767));
+  assert(!std::chrono::__in_range(max, -32767, 32767));
+  assert(!std::chrono::__in_range(int64_t{1} << 32, 0, 12));
+
+  Fields fields;
+  fields.__minutes_ = 60;
+  assert(std::chrono::__in_range(fields, Parts::__minutes, fields.__minutes_, 0, 59));
+  fields.__set(Parts::__minutes);
+  assert(!std::chrono::__in_range(fields, Parts::__minutes, fields.__minutes_, 0, 59));
+  fields.__minutes_ = 59;
+  assert(std::chrono::__in_range(fields, Parts::__minutes, fields.__minutes_, 0, 59));
+  return true;
+}
+
 constexpr bool test_field_queries() {
   Fields fields;
   assert(fields.__has(Parts::__none));
@@ -247,7 +273,7 @@ void test_try_get_date() {
       assert(normalized.__year_ == static_cast<int>(ymd.year()));
       assert(static_cast<unsigned>(normalized.__month_) == static_cast<unsigned>(ymd.month()));
       assert(static_cast<unsigned>(normalized.__day_) == static_cast<unsigned>(ymd.day()));
-      assert(std::chrono::__validate_date_fields(normalized, result));
+      assert(std::chrono::__validate_date_fields(normalized, ymd));
     }
   };
 
@@ -337,6 +363,41 @@ void test_try_get_date() {
   assert(result == initial);
 }
 
+void test_validate_year_fields() {
+  for (int y : {-32767, -2000, -1976, -1, 0, 1968, 1969, 1999, 2000, 2068, 2069, 32767}) {
+    const year_month_day date = year{y} / July / 1;
+    Fields fields;
+    assert(std::chrono::__validate_date_fields(fields, date));
+
+    fields.__year_of_century_ = (y < 0 ? -y : y) % 100;
+    fields.__set(Parts::__year_of_century);
+    assert(std::chrono::__validate_date_fields(fields, date) == (1969 <= y && y <= 2068));
+
+    fields.__century_ = y / 100 - (y % 100 < 0);
+    fields.__set(Parts::__century);
+    assert(std::chrono::__validate_date_fields(fields, date));
+    ++fields.__century_;
+    assert(!std::chrono::__validate_date_fields(fields, date));
+    --fields.__century_;
+
+    fields.__year_ = y;
+    fields.__set(Parts::__year);
+    assert(std::chrono::__validate_date_fields(fields, date));
+    ++fields.__year_;
+    assert(!std::chrono::__validate_date_fields(fields, date));
+    --fields.__year_;
+
+    ++fields.__year_of_century_;
+    assert(!std::chrono::__validate_date_fields(fields, date));
+
+    // A standalone century constrains the candidate even without %Y or %y.
+    fields.__present_ = Parts::__century;
+    assert(std::chrono::__validate_date_fields(fields, date));
+    ++fields.__century_;
+    assert(!std::chrono::__validate_date_fields(fields, date));
+  }
+}
+
 void test_make_date() {
   const year_month_day expected = 2021y / January / 1;
   Fields fields;
@@ -356,7 +417,7 @@ void test_make_date() {
     year_month_day result{};
     assert(std::chrono::__make_date(fields, result));
     assert(result == expected);
-    assert(std::chrono::__validate_date_fields(fields, sys_days{result}));
+    assert(std::chrono::__validate_date_fields(fields, result));
   };
 
   // Exercise each complete representation while retaining redundant constraints.
@@ -372,12 +433,15 @@ void test_make_date() {
 }
 
 int main(int, char**) {
+  static_assert(test_in_range());
+  test_in_range();
   static_assert(test_field_queries());
   test_field_queries();
   test_year();
   test_date();
   test_hour();
   test_try_get_date();
+  test_validate_year_fields();
   test_make_date();
   return 0;
 }
