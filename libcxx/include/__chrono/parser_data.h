@@ -26,7 +26,7 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 
 namespace chrono {
 
-// Fields available in __fields_storage, whether parsed or inferred.
+// Fields supplied by the parsed format directives.
 enum class __fields_set : uint32_t {
   __none    = 0,
   __year    = 1 << 0,
@@ -69,7 +69,8 @@ _LIBCPP_HIDE_FROM_ABI inline constexpr __fields_set& operator|=(__fields_set& __
   return __lhs = __lhs | __rhs;
 }
 
-// Intermediate fields collected while parsing and filled in after validation.
+// Fields collected while parsing. Date/time construction and validation do not
+// modify these values or their presence flags.
 struct __fields_storage {
   int __year_  = 0;
   int __month_ = 0;

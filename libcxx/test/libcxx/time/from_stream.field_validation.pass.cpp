@@ -9,7 +9,7 @@
 // UNSUPPORTED: c++03, c++11, c++14, c++17
 // UNSUPPORTED: no-localization
 
-// Missing calendar fields may be inferred, but conflicting input must not be overwritten.
+// Date/time construction must leave the parsed fields unchanged on success and failure.
 
 #include <cassert>
 #include <chrono>
@@ -96,16 +96,14 @@ constexpr bool test_field_queries() {
 template <class T>
 void check(const Fields& fields, T expected, bool success = true) {
   const T initial{};
-  T result          = initial;
-  Fields normalized = fields;
-  assert(std::chrono::__from_fields(normalized, result) == success);
+  T result              = initial;
+  const Fields snapshot = fields;
+  assert(std::chrono::__from_fields(snapshot, result) == success);
   assert(result == (success ? expected : initial));
-  if (fields.__has(Parts::__year))
-    assert(normalized.__year_ == fields.__year_);
-  if (fields.__has(Parts::__month))
-    assert(normalized.__month_ == fields.__month_);
-  if (fields.__has(Parts::__day))
-    assert(normalized.__day_ == fields.__day_);
+  assert(snapshot.__present_ == fields.__present_);
+  assert(snapshot.__year_ == fields.__year_);
+  assert(snapshot.__month_ == fields.__month_);
+  assert(snapshot.__day_ == fields.__day_);
 }
 
 void test_year() {
@@ -113,12 +111,14 @@ void test_year() {
   fields.__century_         = 20;
   fields.__year_of_century_ = 26;
   fields.__set(Parts::__century | Parts::__year_of_century);
-  Fields normalized = fields;
-  assert(std::chrono::__try_get_year(normalized));
-  assert(normalized.__year_ == 2026);
-  assert(normalized.__has(Parts::__year));
-  assert(normalized.__century_ == 20);
-  assert(normalized.__year_of_century_ == 26);
+  const Fields snapshot = fields;
+  int parsed_year{};
+  assert(std::chrono::__try_get_year(snapshot, parsed_year));
+  assert(parsed_year == 2026);
+  assert(snapshot.__present_ == fields.__present_);
+  assert(snapshot.__year_ == fields.__year_);
+  assert(snapshot.__century_ == 20);
+  assert(snapshot.__year_of_century_ == 26);
   check(fields, 2026y);
   assert(fields.__year_ == 0);
   assert(!fields.__has(Parts::__year));
@@ -129,7 +129,8 @@ void test_year() {
   fields.__year_ = 2025;
   fields.__set(Parts::__year);
   // Obtaining a year must not erase a conflicting explicit value.
-  assert(!std::chrono::__try_get_year(fields));
+  assert(!std::chrono::__try_get_year(fields, parsed_year));
+  assert(parsed_year == 2026);
   check(fields, 2026y / July, false);
   assert(fields.__year_ == 2025);
 
@@ -142,7 +143,8 @@ void test_year() {
 
   fields.__century_         = std::numeric_limits<int>::max();
   fields.__year_of_century_ = 99;
-  assert(!std::chrono::__try_get_year(fields));
+  assert(!std::chrono::__try_get_year(fields, parsed_year));
+  assert(parsed_year == 2026);
   check(fields, year{1}, false);
   fields.__century_         = std::numeric_limits<int>::min();
   fields.__year_of_century_ = std::numeric_limits<int>::min();
@@ -151,14 +153,17 @@ void test_year() {
   fields            = {};
   fields.__century_ = 20;
   fields.__set(Parts::__century);
-  assert(!std::chrono::__try_get_year(fields));
+  assert(!std::chrono::__try_get_year(fields, parsed_year));
+  assert(parsed_year == 2026);
   assert(!fields.__has(Parts::__year));
   fields.__year_ = 2026;
   fields.__set(Parts::__year);
-  assert(std::chrono::__try_get_year(fields));
+  assert(std::chrono::__try_get_year(fields, parsed_year));
+  assert(parsed_year == 2026);
   assert(fields.__year_ == 2026);
   fields.__century_ = 19;
-  assert(!std::chrono::__try_get_year(fields));
+  assert(!std::chrono::__try_get_year(fields, parsed_year));
+  assert(parsed_year == 2026);
   assert(fields.__year_ == 2026);
 
   fields                    = {};
@@ -250,30 +255,17 @@ void test_hour() {
 void test_try_get_date() {
   const sys_days initial{2000y / January / 1};
   auto check_candidate = [&](const Fields& fields, sys_days expected, bool consistent) {
-    Fields normalized = fields;
-    sys_days result   = initial;
-    assert(std::chrono::__try_get_date(normalized, result) == consistent);
+    const Fields snapshot = fields;
+    sys_days result       = initial;
+    assert(std::chrono::__try_get_date(snapshot, result) == consistent);
     assert(result == (consistent ? expected : initial));
-    if (!consistent) {
-      // Neither inferred values nor presence flags may be committed on failure.
-      assert(normalized.__present_ == fields.__present_);
-      assert(normalized.__year_ == fields.__year_);
-      assert(normalized.__month_ == fields.__month_);
-      assert(normalized.__day_ == fields.__day_);
-    }
-    if (fields.__has(Parts::__year))
-      assert(normalized.__year_ == fields.__year_);
-    if (fields.__has(Parts::__month))
-      assert(normalized.__month_ == fields.__month_);
-    if (fields.__has(Parts::__day))
-      assert(normalized.__day_ == fields.__day_);
+    assert(snapshot.__present_ == fields.__present_);
+    assert(snapshot.__year_ == fields.__year_);
+    assert(snapshot.__month_ == fields.__month_);
+    assert(snapshot.__day_ == fields.__day_);
     if (consistent) {
       const year_month_day ymd{expected};
-      assert(normalized.__has(Parts::__year | Parts::__month | Parts::__day));
-      assert(normalized.__year_ == static_cast<int>(ymd.year()));
-      assert(static_cast<unsigned>(normalized.__month_) == static_cast<unsigned>(ymd.month()));
-      assert(static_cast<unsigned>(normalized.__day_) == static_cast<unsigned>(ymd.day()));
-      assert(std::chrono::__validate_date_fields(normalized, ymd));
+      assert(std::chrono::__validate_date_fields(snapshot, ymd));
     }
   };
 

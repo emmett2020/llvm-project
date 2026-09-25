@@ -806,22 +806,17 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
   }
 }
 
-// Obtains a valid year from %Y or %C/%y without changing the parsed fields.
+// Construct a candidate year from %C/%y or %Y, then check consistency with any
+// other supplied year fields. Store the result only if it is representable.
 _LIBCPP_HIDE_FROM_ABI inline bool __try_get_year(const __fields_storage& __f, int& __out) {
-  const bool __has_year            = __f.__has(__fields_set::__year);
-  const bool __has_year_of_century = __f.__has(__fields_set::__year_of_century);
-  const bool __has_century         = __f.__has(__fields_set::__century);
-
-  // Check that enough information is available and %y is in range.
-  if (!__has_year && !__has_year_of_century)
-    return false;
-  if (__has_year_of_century && !__in_range(__f.__year_of_century_, 0, 99))
-    return false;
-
-  // Obtain the year from %C/%y, or use %Y directly.
   int64_t __year{};
-  if (__has_year_of_century) {
-    if (__has_century) {
+
+  if (__f.__has(__fields_set::__year_of_century)) {
+    if (!__in_range(__f.__year_of_century_, 0, 99))
+      return false;
+
+    // Construct the year from %y and either %C or the default century.
+    if (__f.__has(__fields_set::__century)) {
       __year = static_cast<int64_t>(__f.__century_) * 100;
       // %C uses floored division; %y contains the absolute last two digits.
       if (__f.__century_ < 0 && __f.__year_of_century_ != 0)
@@ -831,29 +826,24 @@ _LIBCPP_HIDE_FROM_ABI inline bool __try_get_year(const __fields_storage& __f, in
     } else {
       __year = (__f.__year_of_century_ <= 68 ? 2000 : 1900) + __f.__year_of_century_;
     }
-  } else { // __has_year == true
+
+    // Check the constructed year against %Y, if supplied.
+    if (__f.__has(__fields_set::__year) && __f.__year_ != __year)
+      return false;
+  } else if (__f.__has(__fields_set::__year)) {
     __year = __f.__year_;
+
+    // Check the year obtained from %Y against %C, if supplied.
+    if (__f.__has(__fields_set::__century) && __f.__century_ != __year / 100 - (__year % 100 < 0))
+      return false;
+  } else {
+    return false;
   }
 
-  // Check that %Y, %C, and %y agree and the resulting year is representable.
   if (!__in_range(__year, static_cast<int>(year::min()), static_cast<int>(year::max())))
-    return false;
-  if (__has_year_of_century && __has_year && __f.__year_ != __year)
-    return false;
-  if (!__has_year_of_century && __has_century && __f.__century_ != __year / 100 - (__year % 100 < 0))
     return false;
 
   __out = static_cast<int>(__year);
-  return true;
-}
-
-// Fill in the calendar year only after its constraints have been checked.
-_LIBCPP_HIDE_FROM_ABI inline bool __try_get_year(__fields_storage& __f) {
-  int __year{};
-  if (!__try_get_year(__f, __year))
-    return false;
-  __f.__year_ = __year;
-  __f.__set(__fields_set::__year);
   return true;
 }
 
@@ -921,14 +911,20 @@ _LIBCPP_HIDE_FROM_ABI inline bool __iso_week_to_sys_days(int __g, int __v, weekd
 
 // Converts a calendar year (%Y or %C/%y), week (%U/%W), and weekday (%u/%w)
 // to sys_days, including week zero.
+// The caller must supply a valid year.
 _LIBCPP_HIDE_FROM_ABI inline bool
 __week_to_sys_days(int __year, int __week, weekday __first, weekday __wd, sys_days& __out) {
-  if (!__in_range(__year, static_cast<int>(year::min()), static_cast<int>(year::max())) || !__in_range(__week, 0, 53))
+  if (!__in_range(__week, 0, 53))
     return false;
 
+  // Compute days from 1970-01-01 to __year/__week/__wd in four parts:
+  // 1. Days from 1970-01-01 to __year-01-01.
+  // 2. The initial partial week from __year-01-01 to the next week start (__first).
+  // 3. (__week - 1) complete weeks preceding the requested week.
+  // 4. The final partial week from the week's start (__first) to __wd.
   sys_days __jan1{year{__year} / January / 1};
-  sys_days __first_day = __jan1 + (__first - weekday{__jan1});
-  sys_days __result    = __first_day + weeks{__week - 1} + (__wd - __first);
+  sys_days __week1_start = __jan1 + (__first - weekday{__jan1});
+  sys_days __result      = __week1_start + weeks{__week - 1} + (__wd - __first);
   if (year_month_day{__result}.year() != year{__year})
     return false;
 
@@ -1000,8 +996,7 @@ _LIBCPP_HIDE_FROM_ABI inline bool __validate_date_fields(const __fields_storage&
   return true;
 }
 
-// Construct a valid date from the first complete representation without changing
-// the parsed fields.
+// Construct a valid date from the first complete combination of parsed fields.
 _LIBCPP_HIDE_FROM_ABI inline bool __make_date(const __fields_storage& __f, year_month_day& __out) {
   // Calendar-year combinations use %Y or a year obtained from %C/%y.
   if (int __year{}; __try_get_year(__f, __year)) {
@@ -1065,9 +1060,8 @@ _LIBCPP_HIDE_FROM_ABI inline bool __make_date(const __fields_storage& __f, year_
   return false;
 }
 
-_LIBCPP_HIDE_FROM_ABI inline bool __try_get_date(__fields_storage& __f, sys_days& __out) {
-  // First construct a valid candidate, e.g. from %F/%x, %Y %j, or %G %V %u,
-  // without changing the parsed fields.
+_LIBCPP_HIDE_FROM_ABI inline bool __try_get_date(const __fields_storage& __f, sys_days& __out) {
+  // First construct a valid candidate, e.g. from %F/%x, %Y %j, or %G %V %u.
   year_month_day __ymd{};
   if (!__make_date(__f, __ymd))
     return false;
@@ -1077,11 +1071,6 @@ _LIBCPP_HIDE_FROM_ABI inline bool __try_get_date(__fields_storage& __f, sys_days
   if (!__validate_date_fields(__f, __ymd))
     return false;
 
-  // All supplied fields agree; commit the complete calendar date together.
-  __f.__year_  = static_cast<int>(__ymd.year());
-  __f.__month_ = static_cast<unsigned>(__ymd.month());
-  __f.__day_   = static_cast<unsigned>(__ymd.day());
-  __f.__set(__fields_set::__year | __fields_set::__month | __fields_set::__day);
   __out = sys_days{__ymd};
   return true;
 }
@@ -1241,7 +1230,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
 }
 
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, sys_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, sys_time<_Duration>& __out) {
   sys_days __date{};
   if (!__try_get_date(__f, __date))
     return false;
@@ -1262,7 +1251,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, sys_time<_Durati
 
 // A parsed UTC offset is not applied to local_time.
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, local_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, local_time<_Duration>& __out) {
   sys_days __date{};
   if (!__try_get_date(__f, __date))
     return false;
@@ -1276,7 +1265,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, local_time<_Dura
 }
 
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, file_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, file_time<_Duration>& __out) {
   sys_time<_Duration> __st{};
   if (!chrono::__from_fields(__f, __st))
     return false;
@@ -1288,7 +1277,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, file_time<_Durat
 #    if _LIBCPP_HAS_EXPERIMENTAL_TZDB
 // utc_time permits a leap second.
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, utc_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, utc_time<_Duration>& __out) {
   sys_days __date{};
   if (!__try_get_date(__f, __date))
     return false;
@@ -1305,7 +1294,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, utc_time<_Durati
 }
 
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, tai_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, tai_time<_Duration>& __out) {
   sys_days __date{};
   if (!__try_get_date(__f, __date))
     return false;
@@ -1321,7 +1310,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, tai_time<_Durati
 }
 
 template <class _Duration>
-_LIBCPP_HIDE_FROM_ABI bool __from_fields(__fields_storage& __f, gps_time<_Duration>& __out) {
+_LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, gps_time<_Duration>& __out) {
   sys_days __date{};
   if (!__try_get_date(__f, __date))
     return false;
@@ -1361,15 +1350,16 @@ _LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, mon
   return true;
 }
 
-_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(__fields_storage& __f, year& __out) {
+_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, year& __out) {
   constexpr auto __year_fields = __fields_set::__year | __fields_set::__century | __fields_set::__year_of_century;
   if (!__f.__has_only(__year_fields))
     return false;
 
-  if (!__try_get_year(__f))
+  int __year{};
+  if (!__try_get_year(__f, __year))
     return false;
 
-  __out = year{__f.__year_};
+  __out = year{__year};
   return true;
 }
 
@@ -1399,22 +1389,23 @@ _LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, mon
   return true;
 }
 
-_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(__fields_storage& __f, year_month& __out) {
+_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, year_month& __out) {
   constexpr auto __year_fields = __fields_set::__year | __fields_set::__century | __fields_set::__year_of_century;
   if (!__f.__has_exactly(__fields_set::__month, __year_fields))
     return false;
 
-  if (!__try_get_year(__f))
+  int __year{};
+  if (!__try_get_year(__f, __year))
     return false;
 
   if (!__in_range(__f.__month_, 1, 12))
     return false;
 
-  __out = year_month{year{__f.__year_}, month{static_cast<unsigned>(__f.__month_)}};
+  __out = year_month{year{__year}, month{static_cast<unsigned>(__f.__month_)}};
   return true;
 }
 
-_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(__fields_storage& __f, year_month_day& __out) {
+_LIBCPP_HIDE_FROM_ABI inline bool __from_fields(const __fields_storage& __f, year_month_day& __out) {
   constexpr auto __date_fields =
       __fields_set::__year | __fields_set::__century | __fields_set::__year_of_century | __fields_set::__month |
       __fields_set::__day | __fields_set::__iso_year | __fields_set::__iso_week | __fields_set::__weekday |
