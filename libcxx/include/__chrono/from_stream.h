@@ -893,11 +893,16 @@ _LIBCPP_HIDE_FROM_ABI inline bool __iso_week_to_sys_days(int __g, int __v, weekd
   if (!__in_range(__g, static_cast<int>(year::min()), static_cast<int>(year::max())) || !__in_range(__v, 1, 53))
     return false;
 
-  // ISO week 1 is the week containing 4 January; start from that week's Monday.
+  // ISO week 1 contains __g-01-04 and starts on Monday.
+  // Compute days from 1970-01-01 to __g/__v/__wd in four parts:
+  // 1. Days from 1970-01-01 to __g-01-04.
+  // 2. Subtract the initial partial week from that week's Monday to __g-01-04.
+  // 3. (__v - 1) complete weeks preceding the requested week.
+  // 4. The final partial week from Monday to __wd.
   sys_days __jan4 = static_cast<sys_days>(year_month_day{year{__g}, month{1}, day{4}});
   weekday __jan4_wd{__jan4};
-  sys_days __week1_mon = __jan4 - days{static_cast<int>(__jan4_wd.iso_encoding()) - 1};
-  sys_days __result    = __week1_mon + weeks{__v - 1} + days{static_cast<int>(__wd.iso_encoding()) - 1};
+  sys_days __week1_start = __jan4 - days{static_cast<int>(__jan4_wd.iso_encoding()) - 1};
+  sys_days __result      = __week1_start + weeks{__v - 1} + days{static_cast<int>(__wd.iso_encoding()) - 1};
 
   // Reject a nonexistent week: the Thursday of the result's week must fall in
   // the ISO year '__g'.
@@ -934,7 +939,7 @@ __week_to_sys_days(int __year, int __week, weekday __first, weekday __wd, sys_da
 
 // Compare all parsed date fields with a valid date, including fields that do
 // not form a complete representation on their own, e.g. %F followed by only %G.
-_LIBCPP_HIDE_FROM_ABI inline bool __validate_date_fields(const __fields_storage& __f, const year_month_day& __ymd) {
+_LIBCPP_HIDE_FROM_ABI inline bool __validate_date(const __fields_storage& __f, const year_month_day& __ymd) {
   auto __matches = [&](__fields_set __part, int __parsed, int __expected) {
     return !__f.__has(__part) || __parsed == __expected;
   };
@@ -1068,7 +1073,7 @@ _LIBCPP_HIDE_FROM_ABI inline bool __try_get_date(const __fields_storage& __f, sy
 
   // Then check all parsed date fields, including incomplete representations
   // such as a standalone %G or %V alongside %F.
-  if (!__validate_date_fields(__f, __ymd))
+  if (!__validate_date(__f, __ymd))
     return false;
 
   __out = sys_days{__ymd};

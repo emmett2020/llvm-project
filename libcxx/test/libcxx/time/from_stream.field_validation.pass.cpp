@@ -265,7 +265,7 @@ void test_try_get_date() {
     assert(snapshot.__day_ == fields.__day_);
     if (consistent) {
       const year_month_day ymd{expected};
-      assert(std::chrono::__validate_date_fields(snapshot, ymd));
+      assert(std::chrono::__validate_date(snapshot, ymd));
     }
   };
 
@@ -359,34 +359,34 @@ void test_validate_year_fields() {
   for (int y : {-32767, -2000, -1976, -1, 0, 1968, 1969, 1999, 2000, 2068, 2069, 32767}) {
     const year_month_day date = year{y} / July / 1;
     Fields fields;
-    assert(std::chrono::__validate_date_fields(fields, date));
+    assert(std::chrono::__validate_date(fields, date));
 
     fields.__year_of_century_ = (y < 0 ? -y : y) % 100;
     fields.__set(Parts::__year_of_century);
-    assert(std::chrono::__validate_date_fields(fields, date) == (1969 <= y && y <= 2068));
+    assert(std::chrono::__validate_date(fields, date) == (1969 <= y && y <= 2068));
 
     fields.__century_ = y / 100 - (y % 100 < 0);
     fields.__set(Parts::__century);
-    assert(std::chrono::__validate_date_fields(fields, date));
+    assert(std::chrono::__validate_date(fields, date));
     ++fields.__century_;
-    assert(!std::chrono::__validate_date_fields(fields, date));
+    assert(!std::chrono::__validate_date(fields, date));
     --fields.__century_;
 
     fields.__year_ = y;
     fields.__set(Parts::__year);
-    assert(std::chrono::__validate_date_fields(fields, date));
+    assert(std::chrono::__validate_date(fields, date));
     ++fields.__year_;
-    assert(!std::chrono::__validate_date_fields(fields, date));
+    assert(!std::chrono::__validate_date(fields, date));
     --fields.__year_;
 
     ++fields.__year_of_century_;
-    assert(!std::chrono::__validate_date_fields(fields, date));
+    assert(!std::chrono::__validate_date(fields, date));
 
     // A standalone century constrains the candidate even without %Y or %y.
     fields.__present_ = Parts::__century;
-    assert(std::chrono::__validate_date_fields(fields, date));
+    assert(std::chrono::__validate_date(fields, date));
     ++fields.__century_;
-    assert(!std::chrono::__validate_date_fields(fields, date));
+    assert(!std::chrono::__validate_date(fields, date));
   }
 }
 
@@ -409,7 +409,7 @@ void test_make_date() {
     year_month_day result{};
     assert(std::chrono::__make_date(fields, result));
     assert(result == expected);
-    assert(std::chrono::__validate_date_fields(fields, result));
+    assert(std::chrono::__validate_date(fields, result));
   };
 
   // Exercise each complete representation while retaining redundant constraints.
