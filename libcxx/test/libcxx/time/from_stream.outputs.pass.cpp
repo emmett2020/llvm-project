@@ -64,7 +64,7 @@ void test() {
   check(ST("2026-07-20 UTC"), ST("%F %Z"), true, ST("UTC"), 42min);
   check(ST("2026-07-20 +0130"), ST("%F %z"), true, ST("original"), 90min);
 
-  // Auxiliary fields do not count as extra fields when constructing a day.
+  // UTC offsets and time zone abbreviations do not count as extra fields when constructing a day.
   auto check_day = [](const std::basic_string<CharT>& input, const std::basic_string<CharT>& format, bool success) {
     std::basic_istringstream<CharT> stream(input);
     stream.imbue(std::locale::classic());

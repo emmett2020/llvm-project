@@ -28,7 +28,7 @@ void check(const std::basic_string<CharT>& input,
            const std::basic_string<CharT>& format,
            Calendar expected,
            bool success = true) {
-  // Auxiliary fields are allowed even when their output pointers are null.
+  // UTC offsets and time zone abbreviations are allowed even when their output pointers are null.
   for (bool with_zone : {false, true}) {
     const auto text = input + (with_zone ? ST(" UTC +0130") : ST(""));
     const auto fmt  = format + (with_zone ? ST(" %Z %z") : ST(""));

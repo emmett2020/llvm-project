@@ -100,6 +100,16 @@ void test() {
   check(ST("2021-01-01 2021-W53-5"), ST("%F %G-W%V-%u"), jan1, false);
   check(ST("2021-01-01 366"), ST("%F %j"), jan1, false);
 
+  // An invalid complete calendar representation must not fall back to ISO fields.
+  check(ST("2021-02-30 2020-W53-5"), ST("%F %G-W%V-%u"), jan1, false);
+  check(ST("2021 366 2020-W53-5"), ST("%Y %j %G-W%V-%u"), jan1, false);
+  check(ST("2021 001 2020-W53-5"), ST("%Y %j %G-W%V-%u"), jan1);
+  check(ST("2021 002 2020-W53-5"), ST("%Y %j %G-W%V-%u"), jan1, false);
+  check(ST("2021 00 5 2020 53"), ST("%Y %U %w %G %V"), jan1);
+  check(ST("2021 00 5 2020 52"), ST("%Y %U %w %G %V"), jan1, false);
+  check(ST("2021 00 5 2020 53"), ST("%Y %W %w %G %V"), jan1);
+  check(ST("2021 00 5 2021 53"), ST("%Y %W %w %G %V"), jan1, false);
+
   // Leap days and a negative calendar year's century.
   check(ST("2024 060 02 29"), ST("%Y %j %m %d"), 2024y / February / 29);
   check(ST("2024 060 03"), ST("%Y %j %m"), 2024y / February / 29, false);

@@ -19,19 +19,51 @@ using namespace std::chrono;
 using Fields = std::chrono::__fields_storage;
 using Parts  = std::chrono::__fields_set;
 
-constexpr bool test_used_fields() {
+constexpr bool test_field_queries() {
   Fields fields;
-  assert(fields.__used_fields() == Parts::__none);
+  assert(fields.__has(Parts::__none));
+  assert(!fields.__has(Parts::__day));
+  assert(!fields.__has_any(Parts::__none));
+  assert(!fields.__has_any(Parts::__day | Parts::__month));
+  assert(!fields.__has(Parts::__utc_offset));
+  assert(fields.__has_exactly(Parts::__none));
+  assert(fields.__has_only(Parts::__day));
+  assert(!fields.__has_exactly(Parts::__day));
+  assert(!fields.__has_exactly(Parts::__day, Parts::__month));
   fields.__utc_offset_ = 480;
   fields.__set(Parts::__utc_offset);
-  assert(fields.__used_fields() == Parts::__none);
+  assert(fields.__has(Parts::__utc_offset));
+  assert(fields.__has_any(Parts::__utc_offset));
+  assert(fields.__has_only(Parts::__none));
+  assert(fields.__has_exactly(Parts::__none));
+  assert(!fields.__has_exactly(Parts::__day));
   fields.__set(Parts::__day);
-  assert(fields.__used_fields() == Parts::__day);
+  assert(fields.__has(Parts::__day | Parts::__utc_offset));
+  assert(!fields.__has(Parts::__day | Parts::__month));
+  assert(fields.__has_any(Parts::__day | Parts::__month));
+  assert(!fields.__has_only(Parts::__month));
+  assert(!fields.__has_only(Parts::__none));
+  assert(fields.__has_exactly(Parts::__day));
+  assert(fields.__has_exactly(Parts::__day, Parts::__month));
+  assert(fields.__has_only(Parts::__day | Parts::__month));
+  assert(!fields.__has_exactly(Parts::__month, Parts::__day));
+  assert(!fields.__has_exactly(Parts::__day | Parts::__month));
   fields.__set(Parts::__month);
-  assert(fields.__used_fields() == (Parts::__day | Parts::__month));
+  assert(fields.__has(Parts::__day | Parts::__month));
+  assert(fields.__has_any(Parts::__month | Parts::__year));
+  assert(!fields.__has_any(Parts::__year | Parts::__hours));
+  assert(!fields.__has_only(Parts::__day));
+  assert(fields.__has_only(Parts::__day | Parts::__month));
+  assert(!fields.__has_exactly(Parts::__day));
+  assert(fields.__has_exactly(Parts::__day, Parts::__month));
+  assert(fields.__has_exactly(Parts::__day | Parts::__month));
+  assert(!fields.__has_exactly(Parts::__year, Parts::__day | Parts::__month));
   assert(fields.__present_ == (Parts::__day | Parts::__month | Parts::__utc_offset));
   assert(fields.__has(Parts::__utc_offset));
   assert(fields.__utc_offset_ == 480);
+  fields.__set(Parts::__hours);
+  assert(!fields.__has_exactly(Parts::__day, Parts::__month));
+  assert(!fields.__has_only(Parts::__day | Parts::__month));
   return true;
 }
 
@@ -196,6 +228,13 @@ void test_try_get_date() {
     sys_days result   = initial;
     assert(std::chrono::__try_get_date(normalized, result) == consistent);
     assert(result == (consistent ? expected : initial));
+    if (!consistent) {
+      // Neither inferred values nor presence flags may be committed on failure.
+      assert(normalized.__present_ == fields.__present_);
+      assert(normalized.__year_ == fields.__year_);
+      assert(normalized.__month_ == fields.__month_);
+      assert(normalized.__day_ == fields.__day_);
+    }
     if (fields.__has(Parts::__year))
       assert(normalized.__year_ == fields.__year_);
     if (fields.__has(Parts::__month))
@@ -240,6 +279,9 @@ void test_try_get_date() {
   check_candidate(fields, sys_days{2021y / January / 1}, false);
   fields.__year_ = 2021;
   check_candidate(fields, sys_days{2021y / January / 1}, true);
+  // ISO can supply the candidate, but validation must still reject an invalid year.
+  fields.__year_ = std::numeric_limits<int>::max();
+  check_candidate(fields, sys_days{2021y / January / 1}, false);
   fields.__present_ = Parts::__iso_year | Parts::__iso_week | Parts::__weekday;
   check_candidate(fields, sys_days{2021y / January / 1}, true);
 
@@ -249,6 +291,20 @@ void test_try_get_date() {
   fields.__day_of_year_     = 32;
   fields.__set(Parts::__century | Parts::__year_of_century | Parts::__day_of_year);
   check_candidate(fields, sys_days{2026y / February / 1}, true);
+  fields.__month_ = 3;
+  fields.__set(Parts::__month);
+  check_candidate(fields, sys_days{2026y / February / 1}, false);
+
+  // %y still implies a century even when ISO fields supply the candidate.
+  fields                    = {};
+  fields.__year_of_century_ = 21;
+  fields.__iso_year_        = 2020;
+  fields.__iso_week_        = 53;
+  fields.__weekday_         = 5;
+  fields.__set(Parts::__year_of_century | Parts::__iso_year | Parts::__iso_week | Parts::__weekday);
+  check_candidate(fields, sys_days{2021y / January / 1}, true);
+  fields.__year_of_century_ = 20;
+  check_candidate(fields, sys_days{2021y / January / 1}, false);
 
   fields                = {};
   fields.__year_        = 2026;
@@ -281,12 +337,47 @@ void test_try_get_date() {
   assert(result == initial);
 }
 
+void test_make_date() {
+  const year_month_day expected = 2021y / January / 1;
+  Fields fields;
+  fields.__year_        = 2021;
+  fields.__month_       = 1;
+  fields.__day_         = 1;
+  fields.__day_of_year_ = 1;
+  fields.__week_sun_    = 0;
+  fields.__week_mon_    = 0;
+  fields.__iso_year_    = 2020;
+  fields.__iso_week_    = 53;
+  fields.__weekday_     = 5;
+  fields.__set(Parts::__year | Parts::__month | Parts::__day | Parts::__day_of_year | Parts::__week_sun |
+               Parts::__week_mon | Parts::__iso_year | Parts::__iso_week | Parts::__weekday);
+
+  auto check = [&] {
+    year_month_day result{};
+    assert(std::chrono::__make_date(fields, result));
+    assert(result == expected);
+    assert(std::chrono::__validate_date_fields(fields, sys_days{result}));
+  };
+
+  // Exercise each complete representation while retaining redundant constraints.
+  check();
+  fields.__present_ = fields.__present_ & ~(Parts::__month | Parts::__day);
+  check();
+  fields.__present_ = fields.__present_ & ~Parts::__day_of_year;
+  check();
+  fields.__present_ = fields.__present_ & ~Parts::__week_sun;
+  check();
+  fields.__present_ = fields.__present_ & ~Parts::__week_mon;
+  check();
+}
+
 int main(int, char**) {
-  static_assert(test_used_fields());
-  test_used_fields();
+  static_assert(test_field_queries());
+  test_field_queries();
   test_year();
   test_date();
   test_hour();
   test_try_get_date();
+  test_make_date();
   return 0;
 }

@@ -102,21 +102,34 @@ struct __fields_storage {
 
   __fields_set __present_ = __fields_set::__none;
 
-  // Exclude auxiliary outputs from field-set checks without changing their presence flags.
-  _LIBCPP_HIDE_FROM_ABI constexpr __fields_set __used_fields() const {
-    return __present_ & ~__fields_set::__utc_offset;
-  }
-
   _LIBCPP_HIDE_FROM_ABI constexpr void __set(__fields_set __part) { __present_ |= __part; }
 
-  _LIBCPP_HIDE_FROM_ABI constexpr bool __has(__fields_set __part) const { return (__present_ & __part) == __part; }
-
-  _LIBCPP_HIDE_FROM_ABI constexpr bool __has_any(__fields_set __part) const {
-    return (__present_ & __part) != __fields_set::__none;
+  // Check whether all specified fields are present, allowing additional fields.
+  // __utc_offset is checked like any other field.
+  _LIBCPP_HIDE_FROM_ABI constexpr bool __has(__fields_set __parts) const {
+    return (__present_ & __parts) == __parts;
   }
 
+  // Check whether at least one specified field is present, allowing additional fields.
+  // __utc_offset is checked like any other field.
+  _LIBCPP_HIDE_FROM_ABI constexpr bool __has_any(__fields_set __parts) const {
+    return (__present_ & __parts) != __fields_set::__none;
+  }
+
+  // Allow any subset of these fields. Exclude the UTC offset from this check
+  // so callers do not have to explicitly allow __utc_offset each time.
   _LIBCPP_HIDE_FROM_ABI constexpr bool __has_only(__fields_set __allowed) const {
-    return (__present_ & __allowed) == __present_;
+    const auto __fields = __present_ & ~__fields_set::__utc_offset;
+    return (__fields & ~__allowed) == __fields_set::__none;
+  }
+
+  // Require every required field and allow only optional fields in addition.
+  // The two sets must be disjoint. Exclude the UTC offset from this check
+  // so callers do not have to explicitly allow __utc_offset each time.
+  _LIBCPP_HIDE_FROM_ABI constexpr bool
+  __has_exactly(__fields_set __required, __fields_set __optional = __fields_set::__none) const {
+    const auto __fields = __present_ & ~__fields_set::__utc_offset;
+    return (__fields & ~__optional) == __required;
   }
 };
 
