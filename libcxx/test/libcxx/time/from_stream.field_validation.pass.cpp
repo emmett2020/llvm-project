@@ -19,6 +19,17 @@ using namespace std::chrono;
 using Fields = std::chrono::__fields_storage;
 using Parts  = std::chrono::__fields_set;
 
+static_assert(std::chrono::__fractional_width_v<year_month_day> == 0);
+static_assert(std::chrono::__fractional_width_v<seconds> == 0);
+static_assert(std::chrono::__fractional_width_v<hours> == 0);
+static_assert(std::chrono::__fractional_width_v<milliseconds> == 3);
+static_assert(std::chrono::__fractional_width_v<microseconds> == 6);
+static_assert(std::chrono::__fractional_width_v<nanoseconds> == 9);
+static_assert(std::chrono::__fractional_width_v<sys_days> == 0);
+static_assert(std::chrono::__fractional_width_v<sys_time<milliseconds>> == 3);
+static_assert(std::chrono::__fractional_width_v<local_time<microseconds>> == 6);
+static_assert(std::chrono::__fractional_width_v<file_time<nanoseconds>> == 9);
+
 constexpr bool test_in_range() {
   assert(std::chrono::__in_range(1, 1, 12));
   assert(std::chrono::__in_range(12, 1, 12));

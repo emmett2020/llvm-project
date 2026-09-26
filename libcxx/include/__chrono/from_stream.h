@@ -57,21 +57,16 @@
 _LIBCPP_BEGIN_NAMESPACE_STD
 
 namespace chrono {
-// __fractional_width_ is the number of fractional digits read by %S.
-struct __parse_options {
-  unsigned __fractional_width_ = 0;
-};
-
+// The number of fractional digits read by %S for the target type.
 template <class _Tp>
-inline constexpr __parse_options __parse_options_v{};
+inline constexpr unsigned __fractional_width_v = 0;
 
 template <class _Rep, class _Period>
-inline constexpr __parse_options __parse_options_v<duration<_Rep, _Period> >{
-    hh_mm_ss<duration<_Rep, _Period> >::fractional_width};
+inline constexpr unsigned __fractional_width_v<duration<_Rep, _Period> > =
+    hh_mm_ss<duration<_Rep, _Period> >::fractional_width;
 
 template <class _Clock, class _Duration>
-inline constexpr __parse_options __parse_options_v<time_point<_Clock, _Duration> >{
-    __parse_options_v<_Duration>.__fractional_width_};
+inline constexpr unsigned __fractional_width_v<time_point<_Clock, _Duration> > = __fractional_width_v<_Duration>;
 
 // Check an inclusive range without narrowing parsed int or int64_t fields.
 _LIBCPP_HIDE_FROM_ABI constexpr bool __in_range(int64_t __value, int64_t __lo, int64_t __hi) {
@@ -396,7 +391,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     __fields_storage& __f,
     basic_string<_CharT, _Traits, _Alloc>* __abbrev,
     minutes* __offset,
-    __parse_options __options) {
+    unsigned __fractional_width) {
   const auto& __ctype = std::use_facet<ctype<_CharT> >(__is.getloc());
 
   auto __skip_one_whitespace = [&] {
@@ -572,7 +567,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
 
     case 'D':
       chrono::__parse_from_stream(
-          __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%m/%d/%y"), __f, __abbrev, __offset, __options);
+          __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%m/%d/%y"), __f, __abbrev, __offset, __fractional_width);
       break;
 
     case 'F':
@@ -581,7 +576,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       if (!__is.fail()) {
         __f.__set(__fields_set::__year);
         chrono::__parse_from_stream(
-            __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "-%m-%d"), __f, __abbrev, __offset, __options);
+            __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "-%m-%d"), __f, __abbrev, __offset, __fractional_width);
       }
       break;
 
@@ -663,19 +658,19 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     }
 
     case 'R':
-      chrono::__parse_from_stream(__is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%H:%M"), __f, __abbrev, __offset, __options);
+      chrono::__parse_from_stream(
+          __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%H:%M"), __f, __abbrev, __offset, __fractional_width);
       break;
 
     case 'T':
       chrono::__parse_from_stream(
-          __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%H:%M:%S"), __f, __abbrev, __offset, __options);
+          __is, _LIBCPP_STATICALLY_WIDEN(_CharT, "%H:%M:%S"), __f, __abbrev, __offset, __fractional_width);
       break;
 
     case 'S': {
       // Without an explicit width the field is two digits, plus the decimal
       // point and the fractional digits the target can represent.
-      unsigned __fractional_width = __options.__fractional_width_;
-      unsigned __default_width    = __fractional_width == 0 ? 2 : 3 + __fractional_width;
+      unsigned __default_width = __fractional_width == 0 ? 2 : 3 + __fractional_width;
       // TODO: Parse the locale's alternative seconds representation for %OS.
       chrono::__read_seconds(__is, __has_width ? __width : __default_width, __fractional_width, __f);
       if (!__is.fail())
@@ -1100,7 +1095,7 @@ _LIBCPP_HIDE_FROM_ABI _Duration __to_time_of_day(const __fields_storage& __f, in
   // A target that cannot hold a fraction of a second never parses one, and
   // converting attoseconds to such a coarse period would overflow the ratio
   // arithmetic, so the conversion is not even instantiated.
-  if constexpr (__parse_options_v<_Duration>.__fractional_width_ != 0)
+  if constexpr (__fractional_width_v<_Duration> != 0)
     if (__f.__subseconds_ != 0)
       __result += chrono::duration_cast<_Duration>(duration<int64_t, atto>{__f.__subseconds_});
 
@@ -1248,8 +1243,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, sys_time<_
   if (!__try_get_date(__f, __date))
     return false;
 
-  // Seconds are capped at 59 because sys_time (system_clock) is leap-second
-  // oblivious; the utc_time builder allows 60.
+  // sys_time does not represent leap seconds, so seconds must be in [0, 59].
   int __hour{};
   if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
     return false;
@@ -1288,13 +1282,13 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, file_time<
 }
 
 #    if _LIBCPP_HAS_EXPERIMENTAL_TZDB
-// utc_time permits a leap second.
 template <class _Duration>
 _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, utc_time<_Duration>& __out) {
   sys_days __date{};
   if (!__try_get_date(__f, __date))
     return false;
 
+  // utc_time can represent leap seconds, so the seconds field may be 60.
   int __hour{};
   if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 60))
     return false;
@@ -1452,7 +1446,7 @@ __from_stream(basic_istream<_CharT, _Traits>& __is,
 
     // Parse the input according to the format and collect the fields.
     chrono::__parse_from_stream(
-        __is, __fmt, __f, __abbrev ? &__parsed_abbrev : nullptr, nullptr, __parse_options_v<_Tp>);
+        __is, __fmt, __f, __abbrev ? &__parsed_abbrev : nullptr, nullptr, __fractional_width_v<_Tp>);
     if (__is.fail())
       return __is;
 
