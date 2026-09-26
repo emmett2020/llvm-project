@@ -14,6 +14,8 @@
 #include <cassert>
 #include <chrono>
 #include <limits>
+#include <sstream>
+#include <string>
 
 using namespace std::chrono;
 using Fields = std::chrono::__fields_storage;
@@ -45,15 +47,38 @@ constexpr bool test_in_range() {
   assert(!std::chrono::__in_range(min, -32767, 32767));
   assert(!std::chrono::__in_range(max, -32767, 32767));
   assert(!std::chrono::__in_range(int64_t{1} << 32, 0, 12));
+  return true;
+}
 
+void test_read_signed() {
+  for (int expected : {std::numeric_limits<int>::min(), -1, 0, 1, std::numeric_limits<int>::max()}) {
+    const std::string input = std::to_string(expected);
+    std::istringstream stream{input};
+    int result = 42;
+    std::chrono::__read_signed(stream, static_cast<unsigned>(input.size()), result);
+    assert(!stream.fail());
+    assert(result == expected);
+  }
+}
+
+void test_minute_and_second() {
   Fields fields;
   fields.__minutes_ = 60;
-  assert(std::chrono::__in_range(fields, Parts::__minutes, fields.__minutes_, 0, 59));
+  assert(std::chrono::__validate_minute(fields, 59));
   fields.__set(Parts::__minutes);
-  assert(!std::chrono::__in_range(fields, Parts::__minutes, fields.__minutes_, 0, 59));
+  assert(!std::chrono::__validate_minute(fields, 59));
   fields.__minutes_ = 59;
-  assert(std::chrono::__in_range(fields, Parts::__minutes, fields.__minutes_, 0, 59));
-  return true;
+  assert(std::chrono::__validate_minute(fields, 59));
+
+  fields.__seconds_ = 60;
+  assert(std::chrono::__validate_second(fields, 59));
+  fields.__set(Parts::__seconds);
+  assert(!std::chrono::__validate_second(fields, 59));
+  assert(std::chrono::__validate_second(fields, 60));
+  fields.__seconds_ = 59;
+  assert(std::chrono::__validate_second(fields, 59));
+  fields.__subseconds_ = -1;
+  assert(!std::chrono::__validate_second(fields, 59));
 }
 
 constexpr bool test_field_queries() {
@@ -514,6 +539,8 @@ int main(int, char**) {
   test_year();
   test_date();
   test_hour();
+  test_minute_and_second();
+  test_read_signed();
   test_try_get_date();
   test_validate_year_fields();
   test_make_date();

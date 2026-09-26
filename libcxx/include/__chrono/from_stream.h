@@ -69,12 +69,6 @@ _LIBCPP_HIDE_FROM_ABI constexpr bool __in_range(int64_t __value, int64_t __lo, i
   return __lo <= __value && __value <= __hi;
 }
 
-// An absent field is considered in range.
-_LIBCPP_HIDE_FROM_ABI constexpr bool
-__in_range(const __fields_storage& __f, __fields_set __part, int __value, int __lo, int __hi) {
-  return !__f.__has(__part) || __in_range(__value, __lo, __hi);
-}
-
 _LIBCPP_HIDE_FROM_ABI constexpr int64_t __pow10(unsigned __exp) {
   int64_t __result = 1;
   for (unsigned __i = 0; __i < __exp; ++__i)
@@ -142,31 +136,29 @@ __read_unsigned(basic_istream<_CharT, _Traits>& __is, unsigned __max_digits, int
 // Reads an integer with an optional '+' or '-'. Failure leaves '__value' unchanged.
 // The width includes an optional sign.
 template <class _CharT, class _Traits>
-_LIBCPP_HIDE_FROM_ABI void __read_signed(basic_istream<_CharT, _Traits>& __is, unsigned __max_digits, int& __value) {
+_LIBCPP_HIDE_FROM_ABI void __read_signed(basic_istream<_CharT, _Traits>& __is, unsigned __width, int& __value) {
   bool __negative = false;
-  if (_CharT __c{}; __max_digits != 0 && chrono::__peek(__is, __c) &&
+  if (_CharT __c{}; __width != 0 && chrono::__peek(__is, __c) &&
                     (_Traits::eq(__c, _CharT('-')) || _Traits::eq(__c, _CharT('+')))) {
     __negative = _Traits::eq(__c, _CharT('-'));
     __is.get();
-    --__max_digits;
+    --__width;
   }
 
   const uint64_t __positive_limit = static_cast<uint64_t>((numeric_limits<int>::max)());
   const uint64_t __negative_limit = __positive_limit + 1;
   const uint64_t __limit          = __negative ? __negative_limit : __positive_limit;
 
-  auto __result = chrono::__read_digits(__is, __max_digits, __limit);
+  auto __result = chrono::__read_digits(__is, __width, __limit);
   if (__result.__digits_read == 0 || __result.__overflow) {
     __is.setstate(ios_base::failbit);
     return;
   }
 
-  if (!__negative)
-    __value = static_cast<int>(__result.__value);
-  else if (__result.__value == __negative_limit)
-    __value = (numeric_limits<int>::min)();
+  if (__negative)
+    __value = static_cast<int>(-static_cast<int64_t>(__result.__value));
   else
-    __value = -static_cast<int>(__result.__value);
+    __value = static_cast<int>(__result.__value);
 }
 
 // Parses one locale-dependent conversion specifier with time_get.
@@ -1072,11 +1064,11 @@ _LIBCPP_HIDE_FROM_ABI inline bool __try_get_hour(const __fields_storage& __f, in
 }
 
 _LIBCPP_HIDE_FROM_ABI inline bool __validate_minute(const __fields_storage& __f, int __max_minute) {
-  return __in_range(__f, __fields_set::__minutes, __f.__minutes_, 0, __max_minute);
+  return !__f.__has(__fields_set::__minutes) || __in_range(__f.__minutes_, 0, __max_minute);
 }
 
 _LIBCPP_HIDE_FROM_ABI inline bool __validate_second(const __fields_storage& __f, int __max_second) {
-  return __in_range(__f, __fields_set::__seconds, __f.__seconds_, 0, __max_second) && __f.__subseconds_ >= 0;
+  return (!__f.__has(__fields_set::__seconds) || __in_range(__f.__seconds_, 0, __max_second)) && __f.__subseconds_ >= 0;
 }
 
 template <class _Duration>
