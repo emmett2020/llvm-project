@@ -23,7 +23,7 @@
 #include "make_string.h"
 #include "test_macros.h"
 
-#define ST(S) MAKE_STRING(CharT, S)
+#define STR(S) MAKE_STRING(CharT, S)
 
 template <class... Args>
 concept CanParse = requires(Args&&... args) { std::chrono::parse(std::forward<Args>(args)...); };
@@ -48,7 +48,7 @@ from_stream(std::basic_istream<CharT, Traits>& is,
             std::basic_string<CharT, Traits, Alloc>* abbrev) {
   assert(fmt[0] == CharT('#'));
   assert(abbrev != nullptr);
-  *abbrev = ST("custom");
+  *abbrev = STR("custom");
   return is >> out.count;
 }
 
@@ -62,7 +62,7 @@ from_stream(std::basic_istream<CharT, Traits>& is,
   assert(fmt[0] == CharT('#'));
   assert(offset != nullptr);
   if (abbrev)
-    *abbrev = ST("custom");
+    *abbrev = STR("custom");
   *offset = std::chrono::minutes{90};
   return is >> out.count;
 }
@@ -91,10 +91,10 @@ void test_adl() {
   static_assert(!CanParse<const Format&, const custom::value<3>&>);
   static_assert(!CanParse<const Format&, custom::value<3>>);
 
-  const auto format_storage = ST("#");
+  const auto format_storage = STR("#");
   const Format fmt{format_storage.c_str()};
   {
-    std::basic_istringstream<CharT> is(ST("7"));
+    std::basic_istringstream<CharT> is(STR("7"));
     custom::value<3> result{};
     auto& returned = is >> std::chrono::parse(fmt, result);
     assert(&returned == &is);
@@ -102,16 +102,16 @@ void test_adl() {
     assert(result.count == 7);
   }
   {
-    std::basic_istringstream<CharT> is(ST("7"));
+    std::basic_istringstream<CharT> is(STR("7"));
     custom::value<4> result{};
     String abbrev;
     is >> std::chrono::parse(fmt, result, abbrev);
     assert(!is.fail());
     assert(result.count == 7);
-    assert(abbrev == ST("custom"));
+    assert(abbrev == STR("custom"));
   }
   {
-    std::basic_istringstream<CharT> is(ST("7"));
+    std::basic_istringstream<CharT> is(STR("7"));
     custom::value<5> result{};
     std::chrono::minutes offset{};
     is >> std::chrono::parse(fmt, result, offset);
@@ -120,14 +120,14 @@ void test_adl() {
     assert(offset == std::chrono::minutes{90});
   }
   {
-    std::basic_istringstream<CharT> is(ST("7"));
+    std::basic_istringstream<CharT> is(STR("7"));
     custom::value<5> result{};
     String abbrev;
     std::chrono::minutes offset{};
     is >> std::chrono::parse(fmt, result, abbrev, offset);
     assert(!is.fail());
     assert(result.count == 7);
-    assert(abbrev == ST("custom"));
+    assert(abbrev == STR("custom"));
     assert(offset == std::chrono::minutes{90});
   }
 }
@@ -136,11 +136,11 @@ template <class CharT, class Format>
 void test_chrono() {
   using namespace std::chrono;
   const sys_seconds date    = sys_days{2026y / July / 20};
-  const auto format_storage = ST("%F %Z %z");
+  const auto format_storage = STR("%F %Z %z");
   const Format fmt{format_storage.c_str()};
   // Both format types and all four output combinations cover the eight overloads.
   for (int outputs = 0; outputs < 4; ++outputs) {
-    std::basic_istringstream<CharT> is(ST("2026-07-20 UTC +0130!"));
+    std::basic_istringstream<CharT> is(STR("2026-07-20 UTC +0130!"));
     is.imbue(std::locale::classic());
     sys_seconds result{42s};
     std::basic_string<CharT> abbrev;
@@ -166,13 +166,13 @@ void test_chrono() {
     assert(result == date - 90min);
     assert(is.peek() == CharT('!'));
     if (outputs & 1)
-      assert(abbrev == ST("UTC"));
+      assert(abbrev == STR("UTC"));
     if (outputs & 2)
       assert(offset == 90min);
   }
 
   // A parsing failure is visible on the original stream and leaves the target alone.
-  std::basic_istringstream<CharT> is(ST("invalid"));
+  std::basic_istringstream<CharT> is(STR("invalid"));
   is.imbue(std::locale::classic());
   sys_seconds result{42s};
   is >> parse(fmt, result);
