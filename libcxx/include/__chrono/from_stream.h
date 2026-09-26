@@ -205,7 +205,6 @@ _LIBCPP_HIDE_FROM_ABI void __read_weekday_name(basic_istream<_CharT, _Traits>& _
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI void __read_am_pm(basic_istream<_CharT, _Traits>& __is, bool& __is_pm) {
   tm __tm{};
-  __tm.tm_hour = 0;
   if (chrono::__read_with_time_get(__is, __tm, 'p'))
     __is_pm = __tm.tm_hour == 12;
 }
@@ -498,7 +497,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       ++__fmt;
     }
 
-    char __modifier = 0;
+    char __modifier = '\0';
     if (*__fmt == _CharT('E') || *__fmt == _CharT('O')) {
       __modifier = static_cast<char>(*__fmt == _CharT('E') ? 'E' : 'O');
       ++__fmt;
