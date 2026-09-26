@@ -209,18 +209,43 @@ void test_date() {
 }
 
 void test_hour() {
+  for (bool is_pm : {false, true}) {
+    Fields fields;
+    fields.__is_pm_ = is_pm;
+    fields.__set(Parts::__hour12 | Parts::__am_pm);
+    for (int hour = 1; hour <= 12; ++hour) {
+      fields.__hour12_   = hour;
+      const int expected = (hour == 12 ? 0 : hour) + (is_pm ? 12 : 0);
+      int result         = -1;
+      assert(std::chrono::__try_get_hour(fields, 23, result));
+      assert(result == expected);
+      check(fields, hours{expected});
+    }
+    for (int hour : {std::numeric_limits<int>::min(), -1, 0, 13, std::numeric_limits<int>::max()}) {
+      fields.__hour12_ = hour;
+      int result       = -1;
+      assert(!std::chrono::__try_get_hour(fields, 23, result));
+      assert(result == -1);
+      check(fields, 0h, false);
+    }
+  }
+
   Fields fields;
   fields.__hour12_ = 1;
   fields.__is_pm_  = true;
   fields.__set(Parts::__hour12 | Parts::__am_pm);
-  assert(std::chrono::__compute_hour(fields) == 13);
+  int result = -1;
+  assert(std::chrono::__try_get_hour(fields, 23, result));
+  assert(result == 13);
   check(fields, 13h);
   assert(fields.__hours_ == 0);
   assert(!fields.__has(Parts::__hours));
 
   fields.__hours_ = 12;
   fields.__set(Parts::__hours);
-  assert(!std::chrono::__validate_hour(fields, 13, 23));
+  result = -1;
+  assert(!std::chrono::__try_get_hour(fields, 23, result));
+  assert(result == -1);
   check(fields, 13h, false);
   assert(fields.__hours_ == 12);
 
@@ -243,13 +268,53 @@ void test_hour() {
   fields.__hours_ = 25;
   fields.__set(Parts::__hours);
   check(fields, 25h);
-  assert(!std::chrono::__validate_hour(fields, 25, 23));
+  assert(!std::chrono::__try_get_hour(fields, 23, result));
+  assert(result == -1);
   fields.__minutes_ = 90;
   fields.__seconds_ = 90;
   fields.__set(Parts::__minutes | Parts::__seconds);
   check(fields, 25h + 90min + 90s);
   assert(!std::chrono::__validate_minute(fields, 59));
   assert(!std::chrono::__validate_second(fields, 59));
+
+  fields = {};
+  assert(std::chrono::__try_get_hour(fields, 23, result));
+  assert(result == 0);
+
+  fields.__hour12_ = 12;
+  fields.__set(Parts::__hour12);
+  result = -1;
+  assert(!std::chrono::__try_get_hour(fields, 23, result));
+  assert(result == -1);
+  check(fields, 0h, false);
+
+  fields.__set(Parts::__hours);
+  for (int hour = 0; hour <= 23; ++hour) {
+    fields.__hours_  = hour;
+    fields.__hour12_ = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+    assert(std::chrono::__try_get_hour(fields, 23, result));
+    assert(result == hour);
+    check(fields, hours{hour});
+
+    fields.__hour12_ = fields.__hour12_ == 12 ? 1 : fields.__hour12_ + 1;
+    result           = -1;
+    assert(!std::chrono::__try_get_hour(fields, 23, result));
+    assert(result == -1);
+    check(fields, 0h, false);
+  }
+  fields.__hours_  = 25;
+  fields.__hour12_ = 1;
+  check(fields, 0h, false);
+
+  fields          = {};
+  fields.__hours_ = 13;
+  fields.__set(Parts::__hours | Parts::__am_pm);
+  result = -1;
+  assert(!std::chrono::__try_get_hour(fields, 23, result)); // 13 conflicts with AM.
+  assert(result == -1);
+  fields.__is_pm_ = true;
+  assert(std::chrono::__try_get_hour(fields, 23, result));
+  assert(result == 13);
 }
 
 void test_try_get_date() {

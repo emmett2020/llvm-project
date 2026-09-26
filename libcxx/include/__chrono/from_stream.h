@@ -847,29 +847,37 @@ _LIBCPP_HIDE_FROM_ABI inline bool __try_get_year(const __fields_storage& __f, in
   return true;
 }
 
-// Computes a candidate hour without overwriting %H or adding a presence flag.
-_LIBCPP_HIDE_FROM_ABI inline int __compute_hour(const __fields_storage& __f) {
-  // %I is the hour on the 12-hour clock, which %p disambiguates. Without %p the
-  // hour is taken as it was written.
-  if (__f.__has(__fields_set::__hour12)) {
-    if (__f.__has(__fields_set::__am_pm))
-      return __f.__hour12_ % 12 + (__f.__is_pm_ ? 12 : 0);
-    return __f.__hour12_;
-  }
-  return __f.__hours_;
-}
-
+// Validate and combine %H, %I, and %p, storing the hour only on success.
 // Durations allow hours beyond 23; clock times do not.
-_LIBCPP_HIDE_FROM_ABI inline bool __validate_hour(const __fields_storage& __f, int __hour, int __max_hour) {
+_LIBCPP_HIDE_FROM_ABI inline bool __try_get_hour(const __fields_storage& __f, int __max_hour, int& __out) {
+  int __hour{};
+  if (__f.__has(__fields_set::__hours)) {
+    // %H determines the hour; check agreement with %I and %p if supplied.
+    __hour = __f.__hours_;
+    if (__f.__has(__fields_set::__hour12)) {
+      // With %I present, %H must be in [0, 23] to describe the same clock hour,
+      // even when parsing a duration that otherwise permits hours beyond 23.
+      if (!__in_range(__hour, 0, 23))
+        return false;
+      const int __hour12 = __hour == 0 ? 12 : (__hour > 12 ? __hour - 12 : __hour);
+      if (__f.__hour12_ != __hour12)
+        return false;
+    }
+    if (__f.__has(__fields_set::__am_pm) && (__hour >= 12) != __f.__is_pm_)
+      return false;
+  } else if (__f.__has(__fields_set::__hour12)) {
+    // Without %H, %I requires %p to distinguish AM from PM.
+    if (!__in_range(__f.__hour12_, 1, 12) || !__f.__has(__fields_set::__am_pm))
+      return false;
+    __hour = (__f.__hour12_ == 12 ? 0 : __f.__hour12_) + (__f.__is_pm_ ? 12 : 0);
+  } else {
+    // Default to zero when neither hour field was supplied.
+    __hour = 0;
+  }
+
   if (!__in_range(__hour, 0, __max_hour))
     return false;
-  if (__f.__has(__fields_set::__hours) && __f.__hours_ != __hour)
-    return false;
-  if (__f.__has(__fields_set::__hour12)) {
-    if (!__in_range(__f.__hour12_, 1, 12) || __compute_hour(__f) != __hour)
-      return false;
-  } else if (__f.__has(__fields_set::__am_pm | __fields_set::__hours) && (__hour >= 12) != __f.__is_pm_)
-    return false;
+  __out = __hour;
   return true;
 }
 
@@ -970,21 +978,26 @@ _LIBCPP_HIDE_FROM_ABI inline bool __validate_date(const __fields_storage& __f, c
   if (!__matches(__fields_set::__day_of_year, __f.__day_of_year_, __day_of_year) ||
       !__matches(__fields_set::__week_sun,
                  __f.__week_sun_,
-                 (__day_of_year + 6 - static_cast<int>(__weekday.c_encoding())) / 7) ||
+                 (__day_of_year - static_cast<int>(__weekday.c_encoding()) + 6) / 7) ||
       !__matches(__fields_set::__week_mon,
                  __f.__week_mon_,
-                 (__day_of_year + 7 - static_cast<int>(__weekday.iso_encoding())) / 7))
+                 (__day_of_year - (static_cast<int>(__weekday.iso_encoding()) - 1) + 6) / 7))
     return false;
 
   if (__f.__has_any(__fields_set::__iso_year | __fields_set::__iso_week)) {
-    // Check the ISO year (%G or expanded %g) and week (%V), even if only one was supplied.
-    // The week's Thursday determines its ISO year. Keep that year as an int:
-    // near year::min()/max(), it can fall outside chrono::year's valid range.
+    // Find the Thursday of the week containing __date.
+    // Its calendar year is the ISO year: adjust __iso_year and __iso_jan1
+    // if that Thursday falls in the previous or next calendar year.
+    // Compute the ISO week number from that Thursday's distance from __iso_jan1,
+    // then compare the ISO year and week with any supplied %G/%g and %V fields.
+    // Keep __iso_year as int because it can exceed chrono::year's valid range
+    // near year::min()/max().
     const sys_days __thursday  = __date + days{4 - static_cast<int>(__weekday.iso_encoding())};
     const sys_days __next_jan1 = __jan1 + days{__ymd.year().is_leap() ? 366 : 365};
     int __iso_year             = __year;
     sys_days __iso_jan1        = __jan1;
     if (__thursday < __jan1) {
+      // This week's Thursday falls in the previous calendar year, so the ISO year is __year - 1.
       --__iso_year;
       const bool __is_leap = __iso_year % 4 == 0 && (__iso_year % 100 != 0 || __iso_year % 400 == 0);
       __iso_jan1 -= days{__is_leap ? 366 : 365};
@@ -1094,11 +1107,6 @@ _LIBCPP_HIDE_FROM_ABI _Duration __to_time_of_day(const __fields_storage& __f, in
   return __result;
 }
 
-// Validates a clock time, allowing seconds through '__max_seconds'.
-_LIBCPP_HIDE_FROM_ABI inline bool __time_of_day_ok(const __fields_storage& __f, int __hour, int __max_seconds) {
-  return __validate_hour(__f, __hour, 23) && __validate_minute(__f, 59) && __validate_second(__f, __max_seconds);
-}
-
 // Builders validate parsed fields and convert them to the requested type.
 
 // Computes value * multiplier / divisor and its remainder without overflowing
@@ -1172,9 +1180,9 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
                      __fields_set::__minutes | __fields_set::__seconds))
     return false;
 
-  const int __hour              = __compute_hour(__f);
+  int __hour{};
   constexpr int __max_component = (numeric_limits<int>::max)();
-  if (__f.__day_of_year_ < 0 || !__validate_hour(__f, __hour, __max_component) ||
+  if (__f.__day_of_year_ < 0 || !__try_get_hour(__f, __max_component, __hour) ||
       !__validate_minute(__f, __max_component) || !__validate_second(__f, __max_component))
     return false;
 
@@ -1242,8 +1250,8 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, sys_time<_
 
   // Seconds are capped at 59 because sys_time (system_clock) is leap-second
   // oblivious; the utc_time builder allows 60.
-  const int __hour = __compute_hour(__f);
-  if (!__time_of_day_ok(__f, __hour, 59))
+  int __hour{};
+  if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
     return false;
 
   // %z gives the offset of the parsed time from UTC, so it is subtracted to
@@ -1261,8 +1269,8 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, local_time
   if (!__try_get_date(__f, __date))
     return false;
 
-  const int __hour = __compute_hour(__f);
-  if (!__time_of_day_ok(__f, __hour, 59))
+  int __hour{};
+  if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
     return false;
 
   __out = chrono::floor<_Duration>(local_days{__date.time_since_epoch()} + __to_time_of_day<_Duration>(__f, __hour));
@@ -1287,8 +1295,8 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, utc_time<_
   if (!__try_get_date(__f, __date))
     return false;
 
-  const int __hour = __compute_hour(__f);
-  if (!__time_of_day_ok(__f, __hour, 60))
+  int __hour{};
+  if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 60))
     return false;
 
   // Converting the date before adding the time of day keeps a 60th second
@@ -1304,8 +1312,8 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, tai_time<_
   if (!__try_get_date(__f, __date))
     return false;
 
-  const int __hour = __compute_hour(__f);
-  if (!__time_of_day_ok(__f, __hour, 59))
+  int __hour{};
+  if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
     return false;
 
   constexpr sys_days __tai_epoch{-days{4383}}; // 1958-01-01.
@@ -1320,8 +1328,8 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, gps_time<_
   if (!__try_get_date(__f, __date))
     return false;
 
-  const int __hour = __compute_hour(__f);
-  if (!__time_of_day_ok(__f, __hour, 59))
+  int __hour{};
+  if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
     return false;
 
   constexpr sys_days __gps_epoch{days{3657}}; // 1980-01-06.

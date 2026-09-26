@@ -74,9 +74,13 @@ template <class CharT>
 void test_time_point_resolution() {
   using namespace std::chrono;
   const sys_seconds expected = sys_days{2026y / July / 20} + 13h + 45min + 30s;
-  auto test = [&](auto value) {
+  auto test                  = [&](auto value) {
     check(ST("20 26-07-20 01:45:30 PM"), ST("%C %y-%m-%d %I:%M:%S %p"), value);
     check(ST("20 26 201 13 01:45:30 PM"), ST("%C %y %j %H %I:%M:%S %p"), value);
+    check(ST("2026-07-20 13 01:45:30"), ST("%F %H %I:%M:%S"), value);
+    check(ST("2026-07-20 01:45:30 13"), ST("%F %I:%M:%S %H"), value);
+    check_failure(ST("2026-07-20 01:45:30"), ST("%F %I:%M:%S"), value);
+    check_failure(ST("2026-07-20 14 01:45:30"), ST("%F %H %I:%M:%S"), value);
     check_failure(ST("2026 25-07-20 13:45:30"), ST("%Y %y-%m-%d %T"), value);
     check_failure(ST("2026-07-20 12 01:45:30 PM"), ST("%F %H %I:%M:%S %p"), value);
     check_failure(ST("2026-07-20 13:45:30 AM"), ST("%F %T %p"), value);
@@ -123,6 +127,14 @@ void test() {
   check(ST("PM 01:30"), ST("%p %I:%M"), 810min);
   check(ST("2 01:30"), ST("%j %R"), 48h + 90min);
   check(ST("13 01 PM"), ST("%H %I %p"), 13h);
+  check(ST("13 01"), ST("%H %I"), 13h);
+  check(ST("01 13"), ST("%I %H"), 13h);
+  check(ST("00 12"), ST("%H %I"), 0h);
+  check(ST("12 12"), ST("%H %I"), 12h);
+  check_failure(ST("01"), ST("%I"), 42min);
+  check_failure(ST("12"), ST("%I"), 42min);
+  check_failure(ST("14 01"), ST("%H %I"), 42min);
+  check_failure(ST("25 01"), ST("%H %I"), 42min);
   check_failure(ST("12 01 PM"), ST("%H %I %p"), 42min);
   check_failure(ST("13 AM"), ST("%H %p"), 42min);
   check_failure(ST("PM"), ST("%p"), 42min);
