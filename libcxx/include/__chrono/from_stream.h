@@ -209,6 +209,50 @@ _LIBCPP_HIDE_FROM_ABI void __read_am_pm(basic_istream<_CharT, _Traits>& __is, bo
     __is_pm = __tm.tm_hour == 12;
 }
 
+// Parses an O-modified field through time_get and converts its tm member.
+template <class _CharT, class _Traits>
+_LIBCPP_HIDE_FROM_ABI void
+__read_alternative_field(basic_istream<_CharT, _Traits>& __is, char __spec, int& __field) {
+  tm __tm{};
+  if (!chrono::__read_with_time_get(__is, __tm, __spec, 'O'))
+    return;
+
+  switch (__spec) {
+  case 'd':
+  case 'e':
+    __field = __tm.tm_mday;
+    break;
+  case 'm':
+    if (__tm.tm_mon == (numeric_limits<int>::max)())
+      __is.setstate(ios_base::failbit);
+    else
+      __field = __tm.tm_mon + 1;
+    break;
+  case 'H':
+    __field = __tm.tm_hour;
+    break;
+  case 'I':
+    // Keep the 12-hour value separate from %p until the fields are combined.
+    __field = __tm.tm_hour == 0 ? 12 : __tm.tm_hour;
+    break;
+  case 'M':
+    __field = __tm.tm_min;
+    break;
+  case 'w':
+    __field = __tm.tm_wday;
+    break;
+  case 'y': {
+    // tm_year is relative to 1900; %Oy supplies only the last two digits.
+    int64_t __year = static_cast<int64_t>(__tm.tm_year) + 1900;
+    __field        = static_cast<int>((__year < 0 ? -__year : __year) % 100);
+    break;
+  }
+  default:
+    __is.setstate(ios_base::failbit);
+    return;
+  }
+}
+
 // Parses %S and its optional fractional part. '__width' includes the decimal point.
 template <class _CharT, class _Traits>
 _LIBCPP_HIDE_FROM_ABI void __read_seconds(
@@ -255,9 +299,13 @@ _LIBCPP_HIDE_FROM_ABI void __read_utc_offset(basic_istream<_CharT, _Traits>& __i
     __is.setstate(ios_base::failbit);
     return;
   }
-  int __sign = _Traits::eq(__c, _CharT('-')) ? -1 : 1;
-  if (_Traits::eq(__c, _CharT('+')) || _Traits::eq(__c, _CharT('-')))
+  int __sign = 1;
+  if (_Traits::eq(__c, _CharT('-'))) {
+    __sign = -1;
     __is.get();
+  } else if (_Traits::eq(__c, _CharT('+'))) {
+    __is.get();
+  }
 
   int __hours            = 0;
   unsigned __digits_read = chrono::__read_unsigned(__is, 2, __hours);
@@ -405,48 +453,6 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
   unsigned __width = 0;
   bool __has_width = false;
 
-  // Parses an O-modified field through time_get and converts its tm member.
-  auto __read_alternative_field = [&](char __spec, int& __field) {
-    tm __tm{};
-    if (!chrono::__read_with_time_get(__is, __tm, __spec, 'O'))
-      return;
-
-    switch (__spec) {
-    case 'd':
-    case 'e':
-      __field = __tm.tm_mday;
-      break;
-    case 'm':
-      if (__tm.tm_mon == (numeric_limits<int>::max)())
-        __is.setstate(ios_base::failbit);
-      else
-        __field = __tm.tm_mon + 1;
-      break;
-    case 'H':
-      __field = __tm.tm_hour;
-      break;
-    case 'I':
-      // Keep the 12-hour value separate from %p until the fields are combined.
-      __field = __tm.tm_hour == 0 ? 12 : __tm.tm_hour;
-      break;
-    case 'M':
-      __field = __tm.tm_min;
-      break;
-    case 'w':
-      __field = __tm.tm_wday;
-      break;
-    case 'y': {
-      // tm_year is relative to 1900; %Oy supplies only the last two digits.
-      int64_t __year = static_cast<int64_t>(__tm.tm_year) + 1900;
-      __field        = static_cast<int>((__year < 0 ? -__year : __year) % 100);
-      break;
-    }
-    default:
-      __is.setstate(ios_base::failbit);
-      return;
-    }
-  };
-
   auto __assign_date = [&](const tm& __tm) {
     const int64_t __year = static_cast<int64_t>(__tm.tm_year) + 1900;
     if (__year > (numeric_limits<int>::max)() || __tm.tm_mon == (numeric_limits<int>::max)()) {
@@ -539,8 +545,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
 
     case 'C':
       if (__modifier == 'E') {
-        // TODO: Parse the locale's alternative century representation for %EC.
-        // time_get does not support %C yet, so retain the numeric fallback.
+        // time_get does not support %C; parse %EC numerically.
         chrono::__read_signed(__is, 2, __f.__century_);
       } else {
         chrono::__read_signed(__is, __has_width ? __width : 2, __f.__century_);
@@ -552,7 +557,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     case 'd':
     case 'e':
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__day_);
+        chrono::__read_alternative_field(__is, __spec, __f.__day_);
       else
         chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__day_);
       if (!__is.fail())
@@ -596,7 +601,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
 
     case 'H':
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__hours_);
+        chrono::__read_alternative_field(__is, __spec, __f.__hours_);
       else
         chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__hours_);
       if (!__is.fail())
@@ -605,7 +610,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
 
     case 'I':
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__hour12_);
+        chrono::__read_alternative_field(__is, __spec, __f.__hour12_);
       else
         chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__hour12_);
       if (!__is.fail())
@@ -622,7 +627,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
 
     case 'm':
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__month_);
+        chrono::__read_alternative_field(__is, __spec, __f.__month_);
       else
         chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__month_);
       if (!__is.fail())
@@ -631,7 +636,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
 
     case 'M':
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__minutes_);
+        chrono::__read_alternative_field(__is, __spec, __f.__minutes_);
       else
         chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__minutes_);
       if (!__is.fail())
@@ -665,7 +670,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       // Without an explicit width the field is two digits, plus the decimal
       // point and the fractional digits the target can represent.
       unsigned __default_width = __fractional_width == 0 ? 2 : 3 + __fractional_width;
-      // TODO: Parse the locale's alternative seconds representation for %OS.
+      // time_get ignores the O modifier; parse %OS using ordinary digits.
       chrono::__read_seconds(__is, __has_width ? __width : __default_width, __fractional_width, __f);
       if (!__is.fail())
         __f.__set(__fields_set::__seconds);
@@ -688,7 +693,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
 
     case 'w': {
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__weekday_);
+        chrono::__read_alternative_field(__is, __spec, __f.__weekday_);
       else
         chrono::__read_unsigned(__is, __has_width ? __width : 1, __f.__weekday_);
       if (!__is.fail())
@@ -697,7 +702,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
     }
 
     case 'U':
-      // TODO: Parse the locale's alternative week number for %OU.
+      // time_get does not support %U; parse %OU numerically.
       chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__week_sun_);
       if (!__is.fail())
         __f.__set(__fields_set::__week_sun);
@@ -710,7 +715,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
       break;
 
     case 'W':
-      // TODO: Parse the locale's alternative week number for %OW.
+      // time_get does not support %W; parse %OW numerically.
       chrono::__read_unsigned(__is, __has_width ? __width : 2, __f.__week_mon_);
       if (!__is.fail())
         __f.__set(__fields_set::__week_mon);
@@ -732,7 +737,7 @@ _LIBCPP_HIDE_FROM_ABI void __parse_from_stream(
 
     case 'y':
       if (__modifier == 'O')
-        __read_alternative_field(__spec, __f.__year_of_century_);
+        chrono::__read_alternative_field(__is, __spec, __f.__year_of_century_);
       else if (__modifier == 'E') {
         tm __tm{};
         if (chrono::__read_with_time_get(__is, __tm, __spec, __modifier)) {
@@ -1123,7 +1128,6 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_
   using _Precision = typename _HMS::precision;
 
   // Combine in the parsed precision before converting to the target period.
-  // TODO: Detect overflow in duration conversion and accumulation.
   _Precision __value       = chrono::duration_cast<_Precision>(seconds{static_cast<seconds::rep>(__seconds)});
   const int64_t __fraction = __f.__subseconds_ / __pow10(18 - _HMS::fractional_width);
   __value += _Precision{static_cast<typename _Precision::rep>(__fraction)};
