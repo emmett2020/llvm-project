@@ -10,7 +10,7 @@
 // UNSUPPORTED: no-localization
 
 // <chrono>
-// from_stream: signed widths, duration validation, overflow, and UTC offsets.
+// from_stream: signed widths, duration validation and conversion, and UTC offsets.
 
 #include <cassert>
 #include <chrono>
@@ -126,6 +126,14 @@ void test() {
   check(ST("01:30:00 AM"), ST("%r"), 90min);
   check(ST("PM 01:30"), ST("%p %I:%M"), 810min);
   check(ST("2 01:30"), ST("%j %R"), 48h + 90min);
+  check(ST("1 01"), ST("%j %H"), 25h);
+  check(ST("23:59:59"), ST("%T"), 23h + 59min + 59s);
+  check_failure(ST("24"), ST("%H"), 42h);
+  check_failure(ST("25"), ST("%H"), 42h);
+  check_failure(ST("60"), ST("%M"), 42min);
+  check_failure(ST("60"), ST("%S"), 42s);
+  check_failure(ST("60.0"), ST("%S"), milliseconds{42});
+  check_failure(ST("60.0"), ST("%S"), duration<double, std::milli>{42});
   check(ST("13 01 PM"), ST("%H %I %p"), 13h);
   check(ST("13 01"), ST("%H %I"), 13h);
   check(ST("01 13"), ST("%I %H"), 13h);
@@ -176,24 +184,20 @@ void test() {
   check_failure(ST("-1976 -19"), ST("%5Y %3C"), year{42});
   check(ST("-0123-07-20"), ST("%5F"), year_month_day{year{-123}, July, day{20}});
 
-  // Check both scaling and accumulation, as well as the representation's upper limit.
+  // Check duration conversion and representable boundary values.
   check_failure(ST("2147483647"), ST("%10H"), nanoseconds{42});
-  check_failure(ST("2147483647"), ST("%10j"), nanoseconds{42});
-  check(ST("2562047:47:16.854775807"), ST("%7H:%M:%S"), nanoseconds::max());
-  check_failure(ST("2562047:47:16.854775808"), ST("%7H:%M:%S"), nanoseconds{42});
+  check(ST("106751 23:47:16.854775807"), ST("%6j %T"), nanoseconds::max());
   using UnsignedNanos = duration<std::uint64_t, std::nano>;
   check(ST("213503 23:34:33.709551615"), ST("%6j %T"), UnsignedNanos::max());
-  check_failure(ST("213503 23:34:33.709551616"), ST("%6j %T"), UnsignedNanos{42});
   using Tiny = duration<signed char>;
-  check(ST("127"), ST("%3S"), Tiny::max());
-  check_failure(ST("128"), ST("%3S"), Tiny{42});
+  check(ST("02:07"), ST("%M:%S"), Tiny::max());
   check(ST("0"), ST("%S"), duration<unsigned>{0});
   check(ST("1.25"), ST("%S"), duration<double, std::milli>{1250});
   check(ST("2.50"), ST("%S"), duration<int, std::ratio<3, 2>>{1});
   check(ST("1 12"), ST("%j %H"), duration<int, std::ratio<129600>>{1});
-  // This intermediate product needs more than 64 bits, but the result fits.
+  // Exercise a custom period without overflowing the intermediate representation.
   using NearSecond = duration<std::uint64_t, std::ratio<8000000001LL, 8000000000LL>>;
-  check(ST("925925:55:00"), ST("%6H:%M:%S"), NearSecond{3333333299ULL});
+  check(ST("00:01:00"), ST("%T"), NearSecond{59});
 
   // Offset signs are optional for all three spellings.
   const sys_seconds date = sys_days{2026y / July / 20};

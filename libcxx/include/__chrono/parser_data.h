@@ -75,7 +75,7 @@ struct __fields_storage {
   int __year_  = 0;
   int __month_ = 0;
   int __day_   = 0;
-  // Duration fields are not limited to a single day.
+  // Time-of-day fields.
   int __hours_   = 0;
   int __minutes_ = 0;
   int __seconds_ = 0;

@@ -283,14 +283,14 @@ static void test() {
     assert(value == year{2026});
   }
 
-  // The seconds field uses an int intermediate. Its maximum is accepted for
-  // a duration, while an overflowing value leaves its trailing digits unread.
+  // The seconds field uses an int intermediate. Its maximum is outside the
+  // clock-time range; an overflowing value leaves its trailing digits unread.
   {
     std::basic_istringstream<CharT> stream{ST("2147483647")};
-    duration<long long> value{};
+    duration<long long> value{42};
     from_stream(stream, ST("%10S").c_str(), value);
-    assert(!stream.fail());
-    assert(value == duration<long long>{2147483647});
+    assert(stream.fail());
+    assert(value == duration<long long>{42});
   }
   {
     std::basic_istringstream<CharT> stream{ST("214748364812X")};

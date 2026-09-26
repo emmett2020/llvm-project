@@ -37,10 +37,6 @@
 #  include <__iterator/istreambuf_iterator.h>
 #  include <__locale>
 #  include <__locale_dir/time.h>
-#  include <__type_traits/common_type.h>
-#  include <__type_traits/is_floating_point.h>
-#  include <__type_traits/is_integral.h>
-#  include <__type_traits/make_unsigned.h>
 #  include <cctype>
 #  include <cstdint>
 #  include <ctime>
@@ -843,17 +839,14 @@ _LIBCPP_HIDE_FROM_ABI inline bool __try_get_year(const __fields_storage& __f, in
 }
 
 // Validate and combine %H, %I, and %p, storing the hour only on success.
-// Durations allow hours beyond 23; clock times do not.
-_LIBCPP_HIDE_FROM_ABI inline bool __try_get_hour(const __fields_storage& __f, int __max_hour, int& __out) {
+_LIBCPP_HIDE_FROM_ABI inline bool __try_get_hour(const __fields_storage& __f, int& __out) {
   int __hour{};
   if (__f.__has(__fields_set::__hours)) {
     // %H determines the hour; check agreement with %I and %p if supplied.
     __hour = __f.__hours_;
+    if (!__in_range(__hour, 0, 23))
+      return false;
     if (__f.__has(__fields_set::__hour12)) {
-      // With %I present, %H must be in [0, 23] to describe the same clock hour,
-      // even when parsing a duration that otherwise permits hours beyond 23.
-      if (!__in_range(__hour, 0, 23))
-        return false;
       const int __hour12 = __hour == 0 ? 12 : (__hour > 12 ? __hour - 12 : __hour);
       if (__f.__hour12_ != __hour12)
         return false;
@@ -870,8 +863,6 @@ _LIBCPP_HIDE_FROM_ABI inline bool __try_get_hour(const __fields_storage& __f, in
     __hour = 0;
   }
 
-  if (!__in_range(__hour, 0, __max_hour))
-    return false;
   __out = __hour;
   return true;
 }
@@ -1104,136 +1095,47 @@ _LIBCPP_HIDE_FROM_ABI _Duration __to_time_of_day(const __fields_storage& __f, in
 
 // Builders validate parsed fields and convert them to the requested type.
 
-// Computes value * multiplier / divisor and its remainder without overflowing
-// the intermediate product. Split value into a multiple of divisor and a rest:
-//
-//   q = value / divisor, r = value % divisor
-//   value = q * divisor + r
-//   value * multiplier / divisor
-//     = (q * divisor + r) * multiplier / divisor
-//     = q * multiplier + r * multiplier / divisor
-//
-// All divisions are integer divisions. The first term becomes __base_quotient; the
-// second becomes __quotient. Their sum is written to __result. The unscaled
-// remainder r is stored in __input_remainder; the final __remainder is
-// (r * multiplier) % divisor.
-// This avoids forming value * multiplier, which may overflow even when the
-// quotient fits. If __base_quotient overflows, the final quotient cannot fit either,
-// since __quotient is nonnegative. If r * multiplier overflows, long division
-// below computes __quotient and __remainder without forming that product.
-// All inputs are nonnegative; divisor is positive and at most INTMAX_MAX, so
-// doubling a remainder is representable in uint64_t.
-template <class _UInt>
-_LIBCPP_HIDE_FROM_ABI bool
-__scale_duration(_UInt __value, uint64_t __multiplier, uint64_t __divisor, _UInt& __result, uint64_t& __remainder) {
-  _UInt __base_quotient{};
-  if (__builtin_mul_overflow(__value / __divisor, __multiplier, std::addressof(__base_quotient)))
-    return false;
-
-  const uint64_t __input_remainder = static_cast<uint64_t>(__value % __divisor);
-  _UInt __product{};
-  _UInt __quotient{};
-  if (!__builtin_mul_overflow(static_cast<_UInt>(__input_remainder), __multiplier, std::addressof(__product))) {
-    __quotient  = __product / __divisor;
-    __remainder = static_cast<uint64_t>(__product % __divisor);
-  } else {
-    // Long division of the product, without constructing a double-width integer.
-    __remainder = 0;
-    for (unsigned __bit = 64; __bit != 0; --__bit) {
-      __quotient *= 2;
-      __remainder *= 2;
-      if (__remainder >= __divisor) {
-        __remainder -= __divisor;
-        ++__quotient;
-      }
-      if ((__multiplier >> (__bit - 1)) & 1) {
-        __remainder += __input_remainder;
-        if (__remainder >= __divisor) {
-          __remainder -= __divisor;
-          ++__quotient;
-        }
-      }
-    }
-  }
-  return !__builtin_add_overflow(__base_quotient, __quotient, std::addressof(__result));
-}
-
 template <class _Rep, class _Period>
 _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, duration<_Rep, _Period>& __out) {
   // Durations can represent only elapsed days and time-of-day fields.
   // UTC offsets and time zone abbreviations are allowed but do not contribute to the duration.
-  constexpr auto __duration_fields =
-      __fields_set::__day_of_year | __fields_set::__hours | __fields_set::__hour12 | __fields_set::__am_pm |
-      __fields_set::__minutes | __fields_set::__seconds;
-  if (!__f.__has_only(__duration_fields))
+  constexpr auto __duration_components =
+      __fields_set::__day_of_year | __fields_set::__hours | __fields_set::__hour12 | __fields_set::__minutes |
+      __fields_set::__seconds;
+  if (!__f.__has_only(__duration_components | __fields_set::__am_pm))
     return false;
 
-  // A duration is the sum of its components, which are not restricted to
-  // clock-time ranges. %j is a number of days rather than the day of a year.
-  // At least one component is required.
-  if (!__f.__has_any(__fields_set::__day_of_year | __fields_set::__hours | __fields_set::__hour12 |
-                     __fields_set::__minutes | __fields_set::__seconds))
+  // Require at least one numeric component; %p alone is insufficient.
+  if (!__f.__has_any(__duration_components))
     return false;
 
   int __hour{};
-  constexpr int __max_component = (numeric_limits<int>::max)();
-  if (__f.__day_of_year_ < 0 || !__try_get_hour(__f, __max_component, __hour) ||
-      !__validate_minute(__f, __max_component) || !__validate_second(__f, __max_component))
+  // Use clock-time ranges for %H, %M, and %S; %j supplies any additional days.
+  if (__f.__day_of_year_ < 0 || !__try_get_hour(__f, __hour) || !__validate_minute(__f, 59) ||
+      !__validate_second(__f, 59))
     return false;
 
   constexpr uint64_t __seconds_per_minute = 60;
   constexpr uint64_t __seconds_per_hour   = 60 * __seconds_per_minute;
   constexpr uint64_t __seconds_per_day    = 24 * __seconds_per_hour;
 
+  // Sum the components in seconds; when parsing a duration, %j denotes a day count, not a day of the year.
   // Every whole-number field fits in int, so their sum in seconds fits in uint64_t.
   const uint64_t __seconds =
       static_cast<uint64_t>(__f.__day_of_year_) * __seconds_per_day +
       static_cast<uint64_t>(__hour) * __seconds_per_hour +
       static_cast<uint64_t>(__f.__minutes_) * __seconds_per_minute + __f.__seconds_;
-  if constexpr (is_integral_v<_Rep>) {
-    using _UInt = make_unsigned_t<common_type_t<_Rep, uint64_t>>;
-    _UInt __ticks{};
-    uint64_t __remainder{};
-    if (!__scale_duration(static_cast<_UInt>(__seconds), _Period::den, _Period::num, __ticks, __remainder))
-      return false;
 
-    _UInt __fraction{};
-    uint64_t __fraction_remainder{};
-    if (!__scale_duration(
-            static_cast<_UInt>(__f.__subseconds_),
-            _Period::den,
-            1000000000000000000ULL,
-            __fraction,
-            __fraction_remainder))
-      return false;
-    // Combine before truncating, including the fractional tick left by whole seconds.
-    const _UInt __extra = (__remainder + __fraction) / _Period::num;
-    if (__builtin_add_overflow(__ticks, __extra, std::addressof(__ticks)))
-      return false;
+  using _Duration  = duration<_Rep, _Period>;
+  using _HMS       = hh_mm_ss<_Duration>;
+  using _Precision = typename _HMS::precision;
 
-    if (__ticks > static_cast<_UInt>((numeric_limits<_Rep>::max)()))
-      return false;
-
-    __out = duration<_Rep, _Period>{static_cast<_Rep>(__ticks)};
-  } else if constexpr (is_floating_point_v<_Rep>) {
-    long double __ticks =
-        (static_cast<long double>(__seconds) + static_cast<long double>(__f.__subseconds_) / 1000000000000000000.0L) *
-        _Period::den / _Period::num;
-    if (__ticks < numeric_limits<_Rep>::lowest() || __ticks > (numeric_limits<_Rep>::max)())
-      return false;
-    __out = duration<_Rep, _Period>{static_cast<_Rep>(__ticks)};
-  } else {
-    using _Duration  = duration<_Rep, _Period>;
-    using _HMS       = hh_mm_ss<_Duration>;
-    using _Precision = typename _HMS::precision;
-
-    // Combine in the parsed precision before converting to the target period.
-    // Use the representation's arithmetic rather than built-in overflow operations.
-    _Precision __value       = chrono::duration_cast<_Precision>(seconds{static_cast<seconds::rep>(__seconds)});
-    const int64_t __fraction = __f.__subseconds_ / __pow10(18 - _HMS::fractional_width);
-    __value += _Precision{static_cast<typename _Precision::rep>(__fraction)};
-    __out = chrono::duration_cast<_Duration>(__value);
-  }
+  // Combine in the parsed precision before converting to the target period.
+  // TODO: Detect overflow in duration conversion and accumulation.
+  _Precision __value       = chrono::duration_cast<_Precision>(seconds{static_cast<seconds::rep>(__seconds)});
+  const int64_t __fraction = __f.__subseconds_ / __pow10(18 - _HMS::fractional_width);
+  __value += _Precision{static_cast<typename _Precision::rep>(__fraction)};
+  __out = chrono::duration_cast<_Duration>(__value);
   return true;
 }
 
@@ -1245,7 +1147,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, sys_time<_
 
   // sys_time does not represent leap seconds, so seconds must be in [0, 59].
   int __hour{};
-  if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
+  if (!__try_get_hour(__f, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
     return false;
 
   // %z gives the offset of the parsed time from UTC, so it is subtracted to
@@ -1264,7 +1166,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, local_time
     return false;
 
   int __hour{};
-  if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
+  if (!__try_get_hour(__f, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
     return false;
 
   __out = chrono::floor<_Duration>(local_days{__date.time_since_epoch()} + __to_time_of_day<_Duration>(__f, __hour));
@@ -1290,7 +1192,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, utc_time<_
 
   // utc_time can represent leap seconds, so the seconds field may be 60.
   int __hour{};
-  if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 60))
+  if (!__try_get_hour(__f, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 60))
     return false;
 
   // Converting the date before adding the time of day keeps a 60th second
@@ -1307,7 +1209,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, tai_time<_
     return false;
 
   int __hour{};
-  if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
+  if (!__try_get_hour(__f, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
     return false;
 
   constexpr sys_days __tai_epoch{-days{4383}}; // 1958-01-01.
@@ -1323,7 +1225,7 @@ _LIBCPP_HIDE_FROM_ABI bool __from_fields(const __fields_storage& __f, gps_time<_
     return false;
 
   int __hour{};
-  if (!__try_get_hour(__f, 23, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
+  if (!__try_get_hour(__f, __hour) || !__validate_minute(__f, 59) || !__validate_second(__f, 59))
     return false;
 
   constexpr sys_days __gps_epoch{days{3657}}; // 1980-01-06.
