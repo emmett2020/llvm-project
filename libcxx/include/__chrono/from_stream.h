@@ -69,6 +69,12 @@ _LIBCPP_HIDE_FROM_ABI constexpr bool __in_range(int64_t __value, int64_t __lo, i
   return __lo <= __value && __value <= __hi;
 }
 
+// An absent field is considered in range.
+_LIBCPP_HIDE_FROM_ABI constexpr bool
+__in_range(const __fields_storage& __f, __fields_set __part, int __value, int __lo, int __hi) {
+  return !__f.__has(__part) || __in_range(__value, __lo, __hi);
+}
+
 _LIBCPP_HIDE_FROM_ABI constexpr int64_t __pow10(unsigned __exp) {
   int64_t __result = 1;
   for (unsigned __i = 0; __i < __exp; ++__i)
@@ -838,49 +844,6 @@ _LIBCPP_HIDE_FROM_ABI inline bool __try_get_year(const __fields_storage& __f, in
   return true;
 }
 
-// Validate and combine %H, %I, and %p, storing the hour only on success.
-_LIBCPP_HIDE_FROM_ABI inline bool __try_get_hour(const __fields_storage& __f, int& __out) {
-  int __hour{};
-  if (__f.__has(__fields_set::__hours)) {
-    // %H determines the hour; check agreement with %I and %p if supplied.
-    __hour = __f.__hours_;
-    if (!__in_range(__hour, 0, 23))
-      return false;
-    if (__f.__has(__fields_set::__hour12)) {
-      const int __hour12 = __hour == 0 ? 12 : (__hour > 12 ? __hour - 12 : __hour);
-      if (__f.__hour12_ != __hour12)
-        return false;
-    }
-    if (__f.__has(__fields_set::__am_pm) && (__hour >= 12) != __f.__is_pm_)
-      return false;
-  } else if (__f.__has(__fields_set::__hour12)) {
-    // Without %H, %I requires %p to distinguish AM from PM.
-    if (!__in_range(__f.__hour12_, 1, 12) || !__f.__has(__fields_set::__am_pm))
-      return false;
-    __hour = (__f.__hour12_ == 12 ? 0 : __f.__hour12_) + (__f.__is_pm_ ? 12 : 0);
-  } else {
-    // Default to zero when neither hour field was supplied.
-    __hour = 0;
-  }
-
-  __out = __hour;
-  return true;
-}
-
-// An absent field is considered in range.
-_LIBCPP_HIDE_FROM_ABI constexpr bool
-__in_range(const __fields_storage& __f, __fields_set __part, int __value, int __lo, int __hi) {
-  return !__f.__has(__part) || __in_range(__value, __lo, __hi);
-}
-
-_LIBCPP_HIDE_FROM_ABI inline bool __validate_minute(const __fields_storage& __f, int __max_minute) {
-  return __in_range(__f, __fields_set::__minutes, __f.__minutes_, 0, __max_minute);
-}
-
-_LIBCPP_HIDE_FROM_ABI inline bool __validate_second(const __fields_storage& __f, int __max_second) {
-  return __in_range(__f, __fields_set::__seconds, __f.__seconds_, 0, __max_second) && __f.__subseconds_ >= 0;
-}
-
 // Converts an ISO year (%G, or expanded %g), week (%V), and weekday (%u/%w)
 // to sys_days.
 _LIBCPP_HIDE_FROM_ABI inline bool __iso_week_to_sys_days(int __g, int __v, weekday __wd, sys_days& __out) {
@@ -929,6 +892,70 @@ __week_to_sys_days(int __year, int __week, weekday __first, weekday __wd, sys_da
 
   __out = __result;
   return true;
+}
+
+// Construct a valid date from the first complete combination of parsed fields.
+_LIBCPP_HIDE_FROM_ABI inline bool __make_date(const __fields_storage& __f, year_month_day& __out) {
+  // Calendar-year combinations use %Y or a year obtained from %C/%y.
+  if (int __year{}; __try_get_year(__f, __year)) {
+    // Calendar date: %Y %m %d, also supplied by formats such as %F, %D, or %x.
+    if (__f.__has(__fields_set::__month | __fields_set::__day)) {
+      if (!__in_range(__f.__month_, 1, 12) || !__in_range(__f.__day_, 1, 31))
+        return false;
+
+      const year_month_day __ymd{
+          year{__year}, month{static_cast<unsigned>(__f.__month_)}, day{static_cast<unsigned>(__f.__day_)}};
+      if (!__ymd.ok())
+        return false;
+      __out = __ymd;
+      return true;
+    }
+
+    // Ordinal date: %Y %j.
+    if (__f.__has(__fields_set::__day_of_year)) {
+      if (!__in_range(__f.__day_of_year_, 1, year{__year}.is_leap() ? 366 : 365))
+        return false;
+
+      __out = year_month_day{sys_days{year{__year} / January / 1} + days{__f.__day_of_year_ - 1}};
+      return true;
+    }
+
+    // Week date: %Y with %U or %W and a weekday (%a/%A/%u/%w).
+    if (__f.__has(__fields_set::__weekday) && __f.__has_any(__fields_set::__week_sun | __fields_set::__week_mon)) {
+      if (!__in_range(__f.__weekday_, 0, 6))
+        return false;
+      const bool __use_sunday = __f.__has(__fields_set::__week_sun);
+      sys_days __date{};
+      if (!__week_to_sys_days(
+              __year,
+              __use_sunday ? __f.__week_sun_ : __f.__week_mon_,
+              __use_sunday ? Sunday : Monday,
+              weekday{static_cast<unsigned>(__f.__weekday_)},
+              __date))
+        return false;
+
+      __out = year_month_day{__date};
+      return true;
+    }
+  }
+
+  // ISO week date: %G (or expanded %g), %V, and a weekday (%a/%A/%u/%w).
+  if (__f.__has(__fields_set::__iso_year | __fields_set::__iso_week | __fields_set::__weekday)) {
+    sys_days __date{};
+    if (!__in_range(__f.__weekday_, 0, 6) ||
+        !__iso_week_to_sys_days(
+            __f.__iso_year_, __f.__iso_week_, weekday{static_cast<unsigned>(__f.__weekday_)}, __date))
+      return false;
+
+    // The calendar year can lie outside chrono::year's range.
+    const year_month_day __ymd{__date};
+    if (!__ymd.ok())
+      return false;
+    __out = __ymd;
+    return true;
+  }
+
+  return false;
 }
 
 // Compare all parsed date fields with a valid date, including fields that do
@@ -1000,70 +1027,6 @@ _LIBCPP_HIDE_FROM_ABI inline bool __validate_date(const __fields_storage& __f, c
   return true;
 }
 
-// Construct a valid date from the first complete combination of parsed fields.
-_LIBCPP_HIDE_FROM_ABI inline bool __make_date(const __fields_storage& __f, year_month_day& __out) {
-  // Calendar-year combinations use %Y or a year obtained from %C/%y.
-  if (int __year{}; __try_get_year(__f, __year)) {
-    // Calendar date: %Y %m %d, also supplied by formats such as %F, %D, or %x.
-    if (__f.__has(__fields_set::__month | __fields_set::__day)) {
-      if (!__in_range(__f.__month_, 1, 12) || !__in_range(__f.__day_, 1, 31))
-        return false;
-
-      const year_month_day __ymd{
-          year{__year}, month{static_cast<unsigned>(__f.__month_)}, day{static_cast<unsigned>(__f.__day_)}};
-      if (!__ymd.ok())
-        return false;
-      __out = __ymd;
-      return true;
-    }
-
-    // Ordinal date: %Y %j.
-    if (__f.__has(__fields_set::__day_of_year)) {
-      if (!__in_range(__f.__day_of_year_, 1, year{__year}.is_leap() ? 366 : 365))
-        return false;
-
-      __out = year_month_day{sys_days{year{__year} / January / 1} + days{__f.__day_of_year_ - 1}};
-      return true;
-    }
-
-    // Week date: %Y with %U or %W and a weekday (%a/%A/%u/%w).
-    if (__f.__has(__fields_set::__weekday) && __f.__has_any(__fields_set::__week_sun | __fields_set::__week_mon)) {
-      if (!__in_range(__f.__weekday_, 0, 6))
-        return false;
-      const bool __use_sunday = __f.__has(__fields_set::__week_sun);
-      sys_days __date{};
-      if (!__week_to_sys_days(
-              __year,
-              __use_sunday ? __f.__week_sun_ : __f.__week_mon_,
-              __use_sunday ? Sunday : Monday,
-              weekday{static_cast<unsigned>(__f.__weekday_)},
-              __date))
-        return false;
-
-      __out = year_month_day{__date};
-      return true;
-    }
-  }
-
-  // ISO week date: %G (or expanded %g), %V, and a weekday (%a/%A/%u/%w).
-  if (__f.__has(__fields_set::__iso_year | __fields_set::__iso_week | __fields_set::__weekday)) {
-    sys_days __date{};
-    if (!__in_range(__f.__weekday_, 0, 6) ||
-        !__iso_week_to_sys_days(
-            __f.__iso_year_, __f.__iso_week_, weekday{static_cast<unsigned>(__f.__weekday_)}, __date))
-      return false;
-
-    // The calendar year can lie outside chrono::year's range.
-    const year_month_day __ymd{__date};
-    if (!__ymd.ok())
-      return false;
-    __out = __ymd;
-    return true;
-  }
-
-  return false;
-}
-
 _LIBCPP_HIDE_FROM_ABI inline bool __try_get_date(const __fields_storage& __f, sys_days& __out) {
   // First construct a valid candidate, e.g. from %F/%x, %Y %j, or %G %V %u.
   year_month_day __ymd{};
@@ -1077,6 +1040,43 @@ _LIBCPP_HIDE_FROM_ABI inline bool __try_get_date(const __fields_storage& __f, sy
 
   __out = sys_days{__ymd};
   return true;
+}
+
+// Validate and combine %H, %I, and %p, storing the hour only on success.
+_LIBCPP_HIDE_FROM_ABI inline bool __try_get_hour(const __fields_storage& __f, int& __out) {
+  int __hour{};
+  if (__f.__has(__fields_set::__hours)) {
+    // %H determines the hour; check agreement with %I and %p if supplied.
+    __hour = __f.__hours_;
+    if (!__in_range(__hour, 0, 23))
+      return false;
+    if (__f.__has(__fields_set::__hour12)) {
+      const int __hour12 = __hour == 0 ? 12 : (__hour > 12 ? __hour - 12 : __hour);
+      if (__f.__hour12_ != __hour12)
+        return false;
+    }
+    if (__f.__has(__fields_set::__am_pm) && (__hour >= 12) != __f.__is_pm_)
+      return false;
+  } else if (__f.__has(__fields_set::__hour12)) {
+    // Without %H, %I requires %p to distinguish AM from PM.
+    if (!__in_range(__f.__hour12_, 1, 12) || !__f.__has(__fields_set::__am_pm))
+      return false;
+    __hour = (__f.__hour12_ == 12 ? 0 : __f.__hour12_) + (__f.__is_pm_ ? 12 : 0);
+  } else {
+    // Default to zero when neither hour field was supplied.
+    __hour = 0;
+  }
+
+  __out = __hour;
+  return true;
+}
+
+_LIBCPP_HIDE_FROM_ABI inline bool __validate_minute(const __fields_storage& __f, int __max_minute) {
+  return __in_range(__f, __fields_set::__minutes, __f.__minutes_, 0, __max_minute);
+}
+
+_LIBCPP_HIDE_FROM_ABI inline bool __validate_second(const __fields_storage& __f, int __max_second) {
+  return __in_range(__f, __fields_set::__seconds, __f.__seconds_, 0, __max_second) && __f.__subseconds_ >= 0;
 }
 
 template <class _Duration>
