@@ -228,8 +228,9 @@ _LIBCPP_HIDE_FROM_ABI void __read_seconds(
   if (__fractional_width == 0 || __remaining < 2)
     return;
 
+  const _CharT __decimal_point = std::use_facet<numpunct<_CharT> >(__is.getloc()).decimal_point();
   _CharT __c{};
-  if (!chrono::__peek(__is, __c) || !_Traits::eq(__c, std::use_facet<numpunct<_CharT> >(__is.getloc()).decimal_point()))
+  if (!chrono::__peek(__is, __c) || !_Traits::eq(__c, __decimal_point))
     return;
   __is.get();
   --__remaining;
