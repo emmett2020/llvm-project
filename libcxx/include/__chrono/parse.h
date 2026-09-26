@@ -31,24 +31,9 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 
 namespace chrono {
 
-// [time.parse]: a Parsable is anything from_stream can read, with the trailing
-// arguments the selected parse overload passes on. The call is unqualified, so
-// a user-defined type that provides its own from_stream is parsable as well.
-template <class _Parsable, class _CharT, class _Traits, class... _Args>
-concept __parsable_with =
-    requires(basic_istream<_CharT, _Traits>& __is, const _CharT* __fmt, _Parsable& __tp, _Args*... __args) {
-      from_stream(__is, __fmt, __tp, __args...);
-    };
-
-// The manipulators returned by parse. They store the format and where to put
-// the result and do their work in the extractor; user code never names them.
-// The format is kept as a pointer, so the string a parse call was given has to
-// outlive the extraction -- which it does in the intended
-// "is >> parse(fmt, tp)" usage.
-//
-// There is one manipulator per parse overload rather than a single one with
-// null pointers, because the number of arguments in the resulting from_stream
-// call is what tells the four forms apart.
+// parse() stores the format and output references in a manipulator.
+// operator>> supplies the input stream and calls the matching from_stream overload.
+// Separate manipulator types preserve the four from_stream argument lists.
 
 template <class _CharT, class _Parsable>
 struct __parse_manip {
@@ -105,28 +90,37 @@ struct __parse_manip_abbrev_offset {
   }
 };
 
+// [time.parse]: a Parsable is anything from_stream can read, with the trailing
+// arguments the selected parse overload passes on. The call is unqualified, so
+// a user-defined type that provides its own from_stream is parsable as well.
+template <class _Parsable, class _CharT, class _Traits, class... _Args>
+concept __parsable =
+    requires(basic_istream<_CharT, _Traits>& __is, const _CharT* __fmt, _Parsable& __tp, _Args*... __args) {
+      from_stream(__is, __fmt, __tp, __args...);
+    };
+
 template <class _CharT, class _Parsable>
-  requires __parsable_with<_Parsable, _CharT, char_traits<_CharT>>
+  requires __parsable<_Parsable, _CharT, char_traits<_CharT>>
 _LIBCPP_HIDE_FROM_ABI __parse_manip<_CharT, _Parsable> parse(const _CharT* __fmt, _Parsable& __tp) {
   return {__fmt, std::addressof(__tp)};
 }
 
 template <class _CharT, class _Traits, class _Alloc, class _Parsable>
-  requires __parsable_with<_Parsable, _CharT, _Traits>
+  requires __parsable<_Parsable, _CharT, _Traits>
 _LIBCPP_HIDE_FROM_ABI __parse_manip<_CharT, _Parsable>
 parse(const basic_string<_CharT, _Traits, _Alloc>& __fmt, _Parsable& __tp) {
   return {__fmt.c_str(), std::addressof(__tp)};
 }
 
 template <class _CharT, class _Traits, class _Alloc, class _Parsable>
-  requires __parsable_with<_Parsable, _CharT, _Traits, basic_string<_CharT, _Traits, _Alloc>>
+  requires __parsable<_Parsable, _CharT, _Traits, basic_string<_CharT, _Traits, _Alloc>>
 _LIBCPP_HIDE_FROM_ABI __parse_manip_abbrev<_CharT, _Traits, _Alloc, _Parsable>
 parse(const _CharT* __fmt, _Parsable& __tp, basic_string<_CharT, _Traits, _Alloc>& __abbrev) {
   return {__fmt, std::addressof(__tp), std::addressof(__abbrev)};
 }
 
 template <class _CharT, class _Traits, class _Alloc, class _Parsable>
-  requires __parsable_with<_Parsable, _CharT, _Traits, basic_string<_CharT, _Traits, _Alloc>>
+  requires __parsable<_Parsable, _CharT, _Traits, basic_string<_CharT, _Traits, _Alloc>>
 _LIBCPP_HIDE_FROM_ABI __parse_manip_abbrev<_CharT, _Traits, _Alloc, _Parsable>
 parse(const basic_string<_CharT, _Traits, _Alloc>& __fmt,
       _Parsable& __tp,
@@ -135,28 +129,28 @@ parse(const basic_string<_CharT, _Traits, _Alloc>& __fmt,
 }
 
 template <class _CharT, class _Parsable>
-  requires __parsable_with<_Parsable, _CharT, char_traits<_CharT>, basic_string<_CharT>, minutes>
+  requires __parsable<_Parsable, _CharT, char_traits<_CharT>, basic_string<_CharT>, minutes>
 _LIBCPP_HIDE_FROM_ABI __parse_manip_offset<_CharT, _Parsable>
 parse(const _CharT* __fmt, _Parsable& __tp, minutes& __offset) {
   return {__fmt, std::addressof(__tp), std::addressof(__offset)};
 }
 
 template <class _CharT, class _Traits, class _Alloc, class _Parsable>
-  requires __parsable_with<_Parsable, _CharT, _Traits, basic_string<_CharT, _Traits>, minutes>
+  requires __parsable<_Parsable, _CharT, _Traits, basic_string<_CharT, _Traits>, minutes>
 _LIBCPP_HIDE_FROM_ABI __parse_manip_offset<_CharT, _Parsable>
 parse(const basic_string<_CharT, _Traits, _Alloc>& __fmt, _Parsable& __tp, minutes& __offset) {
   return {__fmt.c_str(), std::addressof(__tp), std::addressof(__offset)};
 }
 
 template <class _CharT, class _Traits, class _Alloc, class _Parsable>
-  requires __parsable_with<_Parsable, _CharT, _Traits, basic_string<_CharT, _Traits, _Alloc>, minutes>
+  requires __parsable<_Parsable, _CharT, _Traits, basic_string<_CharT, _Traits, _Alloc>, minutes>
 _LIBCPP_HIDE_FROM_ABI __parse_manip_abbrev_offset<_CharT, _Traits, _Alloc, _Parsable>
 parse(const _CharT* __fmt, _Parsable& __tp, basic_string<_CharT, _Traits, _Alloc>& __abbrev, minutes& __offset) {
   return {__fmt, std::addressof(__tp), std::addressof(__abbrev), std::addressof(__offset)};
 }
 
 template <class _CharT, class _Traits, class _Alloc, class _Parsable>
-  requires __parsable_with<_Parsable, _CharT, _Traits, basic_string<_CharT, _Traits, _Alloc>, minutes>
+  requires __parsable<_Parsable, _CharT, _Traits, basic_string<_CharT, _Traits, _Alloc>, minutes>
 _LIBCPP_HIDE_FROM_ABI __parse_manip_abbrev_offset<_CharT, _Traits, _Alloc, _Parsable>
 parse(const basic_string<_CharT, _Traits, _Alloc>& __fmt,
       _Parsable& __tp,
